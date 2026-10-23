@@ -72,6 +72,23 @@ namespace osWebRtcVoice
         private static byte[] llsdEmpyAnswerBytes = Util.UTF8.GetBytes("<llsd><array /></llsd>");
         private bool _MessageDetails = false;
 
+        // Experimental BloodMoon P2P signalling, restricted to one scene.
+        private bool m_BloodMoonP2PVoice = false;
+        private readonly object m_P2PLock = new();
+        private readonly Dictionary<UUID, P2PVoiceCall> m_P2PCalls = new();
+        private readonly Dictionary<string, (UUID Session, UUID Agent)> m_P2PViewerSessions = new();
+
+        private sealed class P2PVoiceCall
+        {
+            public UUID Caller;
+            public UUID Callee;
+            public UUID Scene;
+            public string Channel;
+            public string Credentials;
+            public DateTime Expires;
+            public bool Accepted;
+        }
+
         // Control info
         private static bool m_Enabled = false;
 
@@ -139,6 +156,7 @@ namespace osWebRtcVoice
                     if (m_Enabled)
                     {
                         _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
+                        m_BloodMoonP2PVoice = m_Config.GetBoolean("BloodMoonP2PVoice", false);
                         m_log.Info($"{LogHeader} WebRtcVoiceService enabled");
                     }
                 }
@@ -456,6 +474,9 @@ namespace osWebRtcVoice
                         return ;
                     }
 
+                    if (m_BloodMoonP2PVoice)
+                        EndBloodMoonP2P(viewerSessionId, agentID);
+
                     OSDMap logoutresp = null;
                     if (VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
                     {
@@ -482,6 +503,14 @@ namespace osWebRtcVoice
                 //no session id.. new channel?
                 if (map.TryGetString("channel_type", out string channelType))
                 {
+                    if (m_BloodMoonP2PVoice && channelType != "local" &&
+                        !AuthorizeBloodMoonP2P(map, agentID, scene.ID))
+                    {
+                        response.StatusCode = (int)HttpStatusCode.Forbidden;
+                        response.RawBuffer = llsdUndefAnswerBytes;
+                        return;
+                    }
+
                     CleanupDuplicateSessions(agentID, scene.RegionInfo.RegionID, null);
 
                     if(!scene.TryGetScenePresence(agentID, out ScenePresence sp))
@@ -613,6 +642,27 @@ namespace osWebRtcVoice
                 return;
             }
 
+            if (m_BloodMoonP2PVoice && map.TryGetString("channel", out string privateChannel) &&
+                resp.TryGetString("viewer_session", out string privateViewerSession))
+            {
+                lock (m_P2PLock)
+                {
+                    foreach (KeyValuePair<UUID, P2PVoiceCall> entry in m_P2PCalls)
+                    {
+                        if (entry.Value.Channel == privateChannel &&
+                            (entry.Value.Caller == agentID || entry.Value.Callee == agentID))
+                        {
+                            foreach (string old in m_P2PViewerSessions
+                                .Where(view => view.Value.Session == entry.Key && view.Value.Agent == agentID)
+                                .Select(view => view.Key).ToArray())
+                                m_P2PViewerSessions.Remove(old);
+                            m_P2PViewerSessions[privateViewerSession] = (entry.Key, agentID);
+                            break;
+                        }
+                    }
+                }
+            }
+
             if (_MessageDetails) m_log.Debug($"{LogHeader}[ProvisionVoice]: response: {resp}");
 
             response.RawBuffer = OSDParser.SerializeLLSDXmlToBytes(resp);
@@ -742,6 +792,16 @@ namespace osWebRtcVoice
                 }
             }
 
+            if (m_BloodMoonP2PVoice &&
+                (method.Equals("call", StringComparison.OrdinalIgnoreCase) ||
+                 method.Equals("accept invitation", StringComparison.OrdinalIgnoreCase) ||
+                 method.Equals("decline p2p voice", StringComparison.OrdinalIgnoreCase) ||
+                 method.Equals("decline invitation", StringComparison.OrdinalIgnoreCase)))
+            {
+                HandleBloodMoonP2P(request, response, agentID, scene, sp, sessionID, method.ToLowerInvariant());
+                return;
+            }
+
             switch (method.ToLower())
             {
                 // Methods we do not implement but which do not gate session initialisation.
@@ -830,6 +890,166 @@ namespace osWebRtcVoice
                     response.StatusCode = (int)HttpStatusCode.BadRequest;
                     break;
             }
+        }
+
+        private void EndBloodMoonP2P(string viewerSession, UUID agentID)
+        {
+            lock (m_P2PLock)
+            {
+                if (!m_P2PViewerSessions.TryGetValue(viewerSession, out var owner) || owner.Agent != agentID)
+                    return;
+                RemoveBloodMoonP2P(owner.Session);
+                m_log.Info($"{LogHeader} BloodMoon P2P ended: {owner.Session}");
+            }
+        }
+
+        // Call only while holding m_P2PLock. A declined/ended generation must
+        // never invalidate a later call using the same deterministic IM UUID.
+        private void RemoveBloodMoonP2P(UUID sessionID)
+        {
+            m_P2PCalls.Remove(sessionID);
+            foreach (string key in m_P2PViewerSessions.Where(entry => entry.Value.Session == sessionID)
+                .Select(entry => entry.Key).ToArray())
+                m_P2PViewerSessions.Remove(key);
+        }
+
+        private static OSDMap P2PCredentials(P2PVoiceCall call)
+        {
+            return new OSDMap
+            {
+                ["voice_server_type"] = OSD.FromString("webrtc"),
+                ["channel_uri"] = OSD.FromString(call.Channel),
+                ["channel_credentials"] = OSD.FromString(call.Credentials),
+                ["invitation_type"] = OSD.FromInteger(2)
+            };
+        }
+
+        private bool AuthorizeBloodMoonP2P(OSDMap map, UUID agentID, UUID sceneID)
+        {
+            if (!map.TryGetString("channel", out string channel) ||
+                !map.TryGetString("credentials", out string credentials))
+                return false;
+
+            lock (m_P2PLock)
+            {
+                foreach (P2PVoiceCall call in m_P2PCalls.Values)
+                {
+                    if (call.Scene == sceneID && call.Expires > DateTime.UtcNow &&
+                        call.Channel == channel && call.Credentials == credentials &&
+                        (agentID == call.Caller || (agentID == call.Callee && call.Accepted)))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private void HandleBloodMoonP2P(IOSHttpRequest request, IOSHttpResponse response,
+            UUID agentID, Scene scene, ScenePresence sp, UUID sessionID, string method)
+        {
+            if (sp.IsChildAgent || sessionID.IsZero())
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            OSDMap result = new();
+            lock (m_P2PLock)
+            {
+                DateTime now = DateTime.UtcNow;
+                foreach (UUID expired in m_P2PCalls.Where(entry => entry.Value.Expires <= now)
+                    .Select(entry => entry.Key).ToArray())
+                    RemoveBloodMoonP2P(expired);
+
+                m_P2PCalls.TryGetValue(sessionID, out P2PVoiceCall call);
+                if (method == "call")
+                {
+                    // Firestorm P2P IM session IDs are caller XOR callee.
+                    UUID peerID = new(sessionID.ulonga ^ agentID.ulonga,
+                        sessionID.ulongb ^ agentID.ulongb);
+                    if (peerID == agentID || peerID.IsZero() ||
+                        !scene.TryGetScenePresence(peerID, out ScenePresence peer) ||
+                        peer.IsDeleted || peer.IsChildAgent)
+                    {
+                        response.StatusCode = (int)HttpStatusCode.NotFound;
+                        return;
+                    }
+                    if (call != null && (call.Scene != scene.ID ||
+                        (agentID != call.Caller && agentID != call.Callee)))
+                    {
+                        response.StatusCode = (int)HttpStatusCode.Forbidden;
+                        return;
+                    }
+                    if (call == null)
+                    {
+                        IEventQueue queue = scene.RequestModuleInterface<IEventQueue>();
+                        if (queue == null)
+                        {
+                            response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                            return;
+                        }
+                        call = new P2PVoiceCall
+                        {
+                            Caller = agentID, Callee = peerID, Scene = scene.ID,
+                            Channel = UUID.Random().ToString(),
+                            Credentials = UUID.Random().ToString(),
+                            Expires = now.AddMinutes(2)
+                        };
+                        m_P2PCalls[sessionID] = call;
+                        OSDMap body = new()
+                        {
+                            ["session_id"] = OSD.FromUUID(sessionID),
+                            ["session_name"] = OSD.FromString(sp.Name),
+                            ["from_id"] = OSD.FromUUID(agentID),
+                            ["from_name"] = OSD.FromString(sp.Name),
+                            ["voice"] = P2PCredentials(call)
+                        };
+                        if (!queue.Enqueue((OSD)new OSDMap
+                            { ["message"] = OSD.FromString("ChatterBoxInvitation"), ["body"] = body }, peerID))
+                        {
+                            m_P2PCalls.Remove(sessionID);
+                            response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                            return;
+                        }
+                        m_log.Info($"{LogHeader} BloodMoon P2P invitation queued: {sessionID}, {agentID} -> {peerID}");
+                    }
+                    else if (agentID == call.Callee)
+                    {
+                        // WebRTC P2P acceptance calls 'call' again, using the same IM session.
+                        call.Accepted = true;
+                        call.Expires = now.AddHours(12);
+                        m_log.Info($"{LogHeader} BloodMoon P2P accepted: {sessionID}");
+                    }
+                    result["voice_credentials"] = P2PCredentials(call);
+                }
+                else
+                {
+                    if (call == null || call.Scene != scene.ID ||
+                        (agentID != call.Caller && agentID != call.Callee))
+                    {
+                        response.StatusCode = (int)HttpStatusCode.NotFound;
+                        return;
+                    }
+                    if (method == "accept invitation")
+                    {
+                        if (agentID != call.Callee)
+                        {
+                            response.StatusCode = (int)HttpStatusCode.Forbidden;
+                            return;
+                        }
+                        call.Accepted = true;
+                        call.Expires = now.AddHours(12);
+                        result["voice_credentials"] = P2PCredentials(call);
+                    }
+                    else
+                    {
+                        RemoveBloodMoonP2P(sessionID);
+                        m_log.Info($"{LogHeader} BloodMoon P2P declined: {sessionID}");
+                    }
+                }
+            }
+            response.ContentType = "application/llsd+xml";
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(result));
+            response.StatusCode = (int)HttpStatusCode.OK;
         }
 
         /// <summary>
