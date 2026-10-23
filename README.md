@@ -1,3 +1,7 @@
+# WebRTC voice module release
+
+[Download v0.9.3.1-webrtc.1](https://github.com/Vlad-BloodMoon/opensim/releases/tag/v0.9.3.1-webrtc.1) - matching WebRTC DLL/PDB pairs for OpenSim 0.9.3.1 (.NET 8), with private IM voice calls. See [installation and validation](OpenSim/Addons/os-webrtc-janus/INTEGRATION.md). No grid key is included.
+
 Welcome to OpenSimulator (OpenSim for short)!
 
 # Overview

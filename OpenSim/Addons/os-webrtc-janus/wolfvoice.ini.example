@@ -1,0 +1,14 @@
+[WebRtcVoice]
+    Enabled = true
+    SpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
+    NonSpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
+    WebRtcVoiceServerURI = https://voice.example.org:9443
+    CredKeyFile = voice_cred_key
+    MessageDetails = false
+
+[VivoxVoice]
+    enabled = false
+
+; Store the administrator-supplied key in bin/voice_cred_key.
+; Start OpenSim with bin as its working directory.
+; Configure RpcKeyFile only if your voice service requires a relay key.
