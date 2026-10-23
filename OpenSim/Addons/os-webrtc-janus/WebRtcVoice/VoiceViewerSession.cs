@@ -1,29 +1,14 @@
-/*
- * Copyright (c) Contributors, http://opensimulator.org/
- * See CONTRIBUTORS.TXT for a full list of copyright holders.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the OpenSimulator Project nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE CONTRIBUTORS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2024 Robert Adams (misterblue@misterblue.com)
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 using System.Linq;
 using System.Collections.Generic;
@@ -31,10 +16,11 @@ using System.Collections.Generic;
 using OpenMetaverse;
 using System.Threading.Tasks;
 
-namespace osWebRtcVoice
+namespace WebRtcVoice
 {
     public class VoiceViewerSession : IVoiceViewerSession
     {
+
         // A simple session structure that is used when the connection is actually in the
         //    remote service.
         public VoiceViewerSession(IWebRtcVoiceService pVoiceService, UUID pRegionId, UUID pAgentId)
@@ -43,19 +29,18 @@ namespace osWebRtcVoice
             AgentId = pAgentId;
             ViewerSessionID = UUID.Random().ToString();
             VoiceService = pVoiceService;
+            
         }
         public string ViewerSessionID { get; set; }
-        public IWebRtcVoiceService VoiceService { get; set; }
-        public string VoiceServiceSessionId { get; set; }
-        public UUID RegionId { get; set; }
-        public UUID AgentId { get; set; }
-        public IVoiceViewerSession.VFlags Flags { get; set; }
+        public IWebRtcVoiceService VoiceService { get ; set; }
+        public string VoiceServiceSessionId { get => throw new System.NotImplementedException(); set => throw new System.NotImplementedException(); }
+        public UUID RegionId { get ; set; }
+        public UUID AgentId { get ; set; }
 
         // =====================================================================
         // ViewerSessions hold the connection information for the client connection through to the voice service.
         // This collection is static and is simulator wide so there will be sessions for all regions and all clients.
         public static Dictionary<string, IVoiceViewerSession> ViewerSessions = new Dictionary<string, IVoiceViewerSession>();
-
         // Get a viewer session by the viewer session ID
         public static bool TryGetViewerSession(string pViewerSessionId, out IVoiceViewerSession pViewerSession)
         {
@@ -64,9 +49,8 @@ namespace osWebRtcVoice
                 return ViewerSessions.TryGetValue(pViewerSessionId, out pViewerSession);
             }
         }
-
         // public static bool TryGetViewerSessionByAgentId(UUID pAgentId, out IVoiceViewerSession pViewerSession)
-        public static bool TryGetViewerSessionsByAgentId(UUID pAgentId, out IEnumerable<KeyValuePair<string, IVoiceViewerSession>> pViewerSessions)
+        public static bool TryGetViewerSessionByAgentId(UUID pAgentId, out IEnumerable<KeyValuePair<string, IVoiceViewerSession>> pViewerSessions)
         {
             lock (ViewerSessions)
             {
@@ -74,62 +58,21 @@ namespace osWebRtcVoice
                 return pViewerSessions.Count() > 0;
             }
         }
-
-        public static bool TryGetViewerSessionByAgentId(UUID pAgentId, out IVoiceViewerSession pViewerSession)
-        {
-            lock (ViewerSessions)
-            {
-                IEnumerable<KeyValuePair<string,IVoiceViewerSession>> sessions = ViewerSessions.Where(v => v.Value.AgentId == pAgentId);
-                if(sessions.Count() > 0)
-                {
-                    pViewerSession = sessions.First().Value;
-                    return true;
-                }
-                pViewerSession = null;
-                return false;
-            }
-        }
-
         // Get a viewer session by the VoiceService session ID
         public static bool TryGetViewerSessionByVSSessionId(string pVSSessionId, out IVoiceViewerSession pViewerSession)
         {
             lock (ViewerSessions)
             {
-                IEnumerable<KeyValuePair<string,IVoiceViewerSession>> sessions = ViewerSessions.Where(v => v.Value.VoiceServiceSessionId == pVSSessionId);
+                var sessions = ViewerSessions.Where(v => v.Value.VoiceServiceSessionId == pVSSessionId);
                 if (sessions.Count() > 0)
                 {
                     pViewerSession = sessions.First().Value;
                     return true;
-                }
+                }   
                 pViewerSession = null;
                 return false;
             }
         }
-
-        public static bool TryGetViewerSessionByAgentAndRegion(UUID pAgentId, UUID pRegionId, out IVoiceViewerSession pViewerSession)
-        {
-            lock (ViewerSessions)
-            {
-                IVoiceViewerSession session = ViewerSessions.Values.FirstOrDefault(v => v.AgentId == pAgentId && v.RegionId == pRegionId);
-                if (session is not null)
-                {
-                    pViewerSession = session;
-                    return true;
-                }
-                pViewerSession = null;
-                return false;
-            }
-        }
-
-        public static bool TryGetViewerSessionsByAgentAndRegion(UUID pAgentId, UUID pRegionId, out IEnumerable<KeyValuePair<string, IVoiceViewerSession>> pViewerSessions)
-        {
-            lock (ViewerSessions)
-            {
-                pViewerSessions = ViewerSessions.Where(v => v.Value.AgentId == pAgentId && v.Value.RegionId == pRegionId);
-                return pViewerSessions.Count() > 0;
-            }
-        }
-
         public static void AddViewerSession(IVoiceViewerSession pSession)
         {
             lock (ViewerSessions)
@@ -137,7 +80,6 @@ namespace osWebRtcVoice
                 ViewerSessions[pSession.ViewerSessionID] = pSession;
             }
         }
-
         public static void RemoveViewerSession(string pSessionId)
         {
             lock (ViewerSessions)
@@ -164,11 +106,7 @@ namespace osWebRtcVoice
 
         public Task Shutdown()
         {
-            if (!string.IsNullOrEmpty(ViewerSessionID))
-            {
-                RemoveViewerSession(ViewerSessionID);
-            }
-            return Task.CompletedTask;        }
+            throw new System.NotImplementedException();
+        }
     }
 }
-

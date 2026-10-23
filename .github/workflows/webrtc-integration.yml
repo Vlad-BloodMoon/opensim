@@ -1,0 +1,36 @@
+name: Build WebRTC integration modules
+on:
+  push:
+    branches: ["integration/webrtc-1.2.0"]
+    paths: ["OpenSim/Addons/os-webrtc-janus/**", ".github/workflows/webrtc-integration.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: bash runprebuild.sh
+      - run: dotnet build -c Release OpenSim.sln
+      - name: Package matching modules
+        run: |
+          set -eu
+          mkdir package
+          for module in WebRtcVoice WebRtcVoiceRegionModule WebRtcVoiceServiceModule; do
+            cp "bin/$module.dll" "bin/$module.pdb" package/
+          done
+          cp OpenSim/Addons/os-webrtc-janus/INTEGRATION.md package/README.md
+          git rev-parse HEAD > package/COMMIT.txt
+          cd package
+          sha256sum *.dll *.pdb > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-1.2.0-integration-modules
+          path: package/
+          if-no-files-found: error

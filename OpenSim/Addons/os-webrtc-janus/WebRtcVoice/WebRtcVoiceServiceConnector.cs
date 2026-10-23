@@ -1,32 +1,18 @@
-/*
- * Copyright (c) Contributors, http://opensimulator.org/
- * See CONTRIBUTORS.TXT for a full list of copyright holders.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the OpenSimulator Project nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE CONTRIBUTORS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2024 Robert Adams (misterblue@misterblue.com)
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 using System;
 using System.Reflection;
+using System.Threading.Tasks;
 
 using OpenSim.Framework;
 
@@ -35,8 +21,9 @@ using OpenMetaverse.StructuredData;
 
 using log4net;
 using Nini.Config;
+using OSHttpServer;
 
-namespace osWebRtcVoice
+namespace WebRtcVoice
 {
     // Class that provides the local IWebRtcVoiceService interface to the JsonRPC Robust
     //     server. This is used by the region servers to talk to the Robust server.
@@ -44,11 +31,15 @@ namespace osWebRtcVoice
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private static readonly string LogHeader = "[WEBRTC VOICE SERVICE CONNECTOR]";
-        private readonly bool m_Enabled = false;
-        private readonly bool m_MessageDetails = false;
+        private bool m_Enabled = false;
+        private bool m_MessageDetails = false;
         private IConfigSource m_Config;
 
         string m_serverURI = "http://localhost:8080";
+        // [Wolf 2026-10-09] The key wolfvoice requires from the relay (security scan H5): read from
+        // [WebRtcVoice] RpcKeyFile, default /etc/opensim/voice_rpc_key. Empty = not sent.
+        // [HARDENING 2026-10-23] Re-read when the file changes (WolfVoiceKeyFile), and never logged.
+        WolfVoiceKeyFile m_rpcKey = new WolfVoiceKeyFile(string.Empty);
 
         public WebRtcVoiceServiceConnector(IConfigSource pConfig)
         {
@@ -61,18 +52,21 @@ namespace osWebRtcVoice
                 if (m_Enabled)
                 {
                     m_serverURI = moduleConfig.GetString("WebRtcVoiceServerURI", string.Empty);
+                    m_rpcKey = new WolfVoiceKeyFile(moduleConfig.GetString("RpcKeyFile", "/etc/opensim/voice_rpc_key"));
                     if (string.IsNullOrWhiteSpace(m_serverURI))
                     {
-                        m_log.Error($"{LogHeader} WebRtcVoiceServiceConnector enabled but no WebRtcVoiceServerURI specified");
+                        m_log.ErrorFormat("{0} WebRtcVoiceServiceConnector enabled but no WebRtcVoiceServerURI specified", LogHeader);
                         m_Enabled = false;
-                        return;
+                    }
+                    else
+                    {
+                        m_log.InfoFormat("{0} WebRtcVoiceServiceConnector enabled", LogHeader);
                     }
 
                     m_MessageDetails = moduleConfig.GetBoolean("MessageDetails", false);
-
-                    m_log.Info($"{LogHeader} WebRtcVoiceServiceConnector enabled");
                 }
             }
+
         }
 
         // Create a local viewer session. This gets a local viewer session ID that is
@@ -80,132 +74,74 @@ namespace osWebRtcVoice
         //    so that the viewer session ID is the same here as from the WebRTC service.
         public IVoiceViewerSession CreateViewerSession(OSDMap pRequest, UUID pUserID, UUID pSceneID)
         {
-            m_log.Debug($"{LogHeader} CreateViewerSession");
-            return new VoiceViewerSession(this, pSceneID, pUserID);
+            m_log.DebugFormat("{0} CreateViewerSession", LogHeader);
+            return new VoiceViewerSession(this, pUserID, pSceneID);   
         }
 
-        public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
+        public Task<OSDMap> ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
         {
-            m_log.Debug($"{LogHeader} ProvisionVoiceAccountRequest without ViewerSession. uID={pUserID}, sID={pSceneID}");
+            m_log.DebugFormat("{0} ProvisionVoiceAccountRequest without ViewerSession. uID={1}, sID={2}", LogHeader, pUserID, pSceneID);
             return null;
         }
 
         // Received a ProvisionVoiceAccountRequest from a viewer. Forward it to the WebRTC service.
-        public OSDMap ProvisionVoiceAccountRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pSceneID)
+        public async Task<OSDMap> ProvisionVoiceAccountRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pSceneID)
         {
-            m_log.Debug($"{LogHeader} ProvisionVoiceAccountRequest. uID={pUserID}, sID={pSceneID}");
-            OSDMap req = new()
+            m_log.DebugFormat("{0} VoiceSignalingRequest. uID={1}, sID={2}", LogHeader, pUserID, pSceneID);
+            OSDMap req = new OSDMap()
             {
                 { "request", pRequest },
                 { "userID", pUserID.ToString() },
                 { "scene", pSceneID.ToString() }
             };
-            OSDMap resp = JsonRpcRequest("provision_voice_account_request", m_serverURI, req);
+            string key = m_rpcKey.Value;
+            if (key.Length > 0) req["key"] = key;
+            var resp = await JsonRpcRequest("provision_voice_account_request", m_serverURI, req);
 
             // Kludge to sync the viewer session number in our IVoiceViewerSession with the one from the WebRTC service.
-            if (resp.TryGetString("viewer_session", out string otherViewerSessionId))
+            if (resp.ContainsKey("viewer_session"))
             {
-                m_log.Debug(
-                    $"{LogHeader} ProvisionVoiceAccountRequest: syncing viewSessionID. old={pVSession.ViewerSessionID}, new={otherViewerSessionId}");
+                string otherViewerSessionId = resp["viewer_session"].AsString();
+                m_log.DebugFormat("{0} ProvisionVoiceAccountRequest: syncing viewSessionID. old={1}, new={2}",
+                                LogHeader, pVSession.ViewerSessionID, otherViewerSessionId);
                 VoiceViewerSession.UpdateViewerSessionId(pVSession, otherViewerSessionId);
             }
 
             return resp;
         }
 
-        public OSDMap VoiceSignalingRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
+        public Task<OSDMap> VoiceSignalingRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
         {
-            m_log.Debug($"{LogHeader} VoiceSignalingRequest without ViewerSession. uID={pUserID}, sID={pSceneID}");
+            m_log.DebugFormat("{0} VoiceSignalingRequest without ViewerSession. uID={1}, sID={2}", LogHeader, pUserID, pSceneID);
             return null;
         }
 
-        public OSDMap VoiceSignalingRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pSceneID)
+        public Task<OSDMap> VoiceSignalingRequest(IVoiceViewerSession pVSession, OSDMap pRequest, UUID pUserID, UUID pSceneID)
         {
-            m_log.Debug($"{LogHeader} VoiceSignalingRequest. uID={pUserID}, sID={pSceneID}");
-            OSDMap req = new()
+            m_log.DebugFormat("{0} VoiceSignalingRequest. uID={1}, sID={2}", LogHeader, pUserID, pSceneID);
+            OSDMap req = new OSDMap()
             {
                 { "request", pRequest },
                 { "userID", pUserID.ToString() },
                 { "scene", pSceneID.ToString() }
             };
+            string key = m_rpcKey.Value;
+            if (key.Length > 0) req["key"] = key;
             return JsonRpcRequest("voice_signaling_request", m_serverURI, req);
         }
 
-        public OSDMap JsonRpcRequest(string method, string uri, OSDMap pParams)
+        // [HARDENING 2026-10-23] Sent through WolfVoiceHttp, which verifies the voice server's TLS
+        // certificate (OpenSim's shared client does not, by default) and never logs the relay key
+        // (this method used to log the whole request, key included, at :160 and :167). The answer
+        // is the same as before: the "result" map, or {"error": text}.
+        public Task<OSDMap> JsonRpcRequest(string method, string uri, OSDMap pParams)
         {
-            string jsonId = UUID.Random().ToString();
-
             if(string.IsNullOrWhiteSpace(uri))
                 return null;
 
-            OSDMap request = new()
-            {
-                { "jsonrpc", OSD.FromString("2.0") },
-                { "id", OSD.FromString(jsonId) },
-                { "method", OSD.FromString(method) },
-                { "params", pParams }
-            };
-
-            OSDMap outerResponse;
-            try
-            {
-                if (m_MessageDetails) m_log.Debug($"{LogHeader}: request: {request}");
-
-                outerResponse = WebUtil.PostToService(uri, request, 10000, true);
-
-                if (m_MessageDetails) m_log.Debug($"{LogHeader}: response: {outerResponse}");
-            }
-            catch (Exception e)
-            {
-                m_log.Error($"{LogHeader}: JsonRpc request '{method}' to {uri} failed: {e.Message}");
-                m_log.Debug($"{LogHeader}: request: {request}");
-                return new OSDMap()
-                {
-                    { "error", OSD.FromString(e.Message) }
-                };
-            }
-
-            if (outerResponse is null || outerResponse.Count == 0)
-            {
-                string errm = $"JsonRpc request '{method}' to {uri} returned an empty response";
-                m_log.Error(errm);
-                return new OSDMap()
-                {
-                    { "error", errm }
-                };
-            }
-
-            if (!outerResponse.TryGetOSDMap("_Result", out OSDMap response))
-            {
-                string errm = $"JsonRpc request '{method}' to {uri} returned an invalid response: {OSDParser.SerializeJsonString(outerResponse)}";
-                m_log.Error(errm);
-                return new OSDMap()
-                {
-                    { "error", errm }
-                };
-            }
-
-            if (response.TryGetValue("error", out OSD osdtmp))
-            {
-                string errm = $"JsonRpc request '{method}' to {uri} returned an error: {OSDParser.SerializeJsonString(osdtmp)}";
-                m_log.Error(errm);
-                return new OSDMap()
-                {
-                    { "error", errm }
-                };
-            }
-
-            if (!response.TryGetOSDMap("result", out OSDMap resultmap ))
-            {
-                string errm = $"JsonRpc request '{method}' to {uri} returned result as non-OSDMap: {OSDParser.SerializeJsonString(outerResponse)}";
-                m_log.Error(errm);
-                return new OSDMap()
-                {
-                    { "error", errm }
-                };
-            }
-
-            return resultmap;
+            bool details = m_MessageDetails;
+            return Task.Run(() => WolfVoiceHttp.PostJsonRpc(uri, method, pParams, 10000, details));
         }
+
     }
 }
