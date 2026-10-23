@@ -1,0 +1,50 @@
+name: Publish validated voice release
+on:
+  push:
+    branches: ["master"]
+    paths: [".github/workflows/publish-validated.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    if: github.repository == 'Vlad-BloodMoon/opensim' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify validated build provenance and download
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/$GH_REPO/actions/runs/39933468262 --jq .head_sha)" = 'd408fdfc14a805bac732e4a90cce73230d4bff4e'
+          test "$(gh api repos/$GH_REPO/actions/runs/39933468262 --jq .conclusion)" = success
+          gh run download 39933468262 --name 'webrtc-1.2.0-integration-modules' --dir validated
+          cd validated
+          sha256sum -c SHA256SUMS
+      - name: Package public files without grid credentials
+        run: |
+          set -euo pipefail
+          mkdir dist
+          mkdir module
+          for name in WebRtcVoice WebRtcVoiceRegionModule WebRtcVoiceServiceModule; do
+            cp "validated/$name.dll" "validated/$name.pdb" module/
+          done
+          cp OpenSim/Addons/os-webrtc-janus/INTEGRATION.md module/README.md
+          cp OpenSim/Addons/os-webrtc-janus/wolfvoice.ini.example module/
+          printf '%s\n' 'd408fdfc14a805bac732e4a90cce73230d4bff4e' > module/BUILD_COMMIT.txt
+          cd module
+          sha256sum *.dll *.pdb wolfvoice.ini.example > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          zip ../dist/WebRTC_Modules_0.9.3.1.zip *
+          cd ..
+          cd dist
+          sha256sum WebRTC_Modules_0.9.3.1.zip > WebRTC_Modules_0.9.3.1.zip.sha256
+          cd ..
+      - name: Publish normal release
+        run: |
+          set -euo pipefail
+          gh release create 'v0.9.3.1-webrtc.1' dist/* --target "$GITHUB_SHA" --title 'WebRTC modules for OpenSim 0.9.3.1' --notes-file 'OpenSim/Addons/os-webrtc-janus/RELEASE.md' --latest

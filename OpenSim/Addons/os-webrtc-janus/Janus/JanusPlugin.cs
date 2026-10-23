@@ -1,33 +1,22 @@
-/*
- * Copyright (c) Contributors, http://opensimulator.org/
- * See CONTRIBUTORS.TXT for a full list of copyright holders.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the OpenSimulator Project nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE CONTRIBUTORS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2024 Robert Adams (misterblue@misterblue.com)
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 using System;
 using System.Reflection;
 using System.Threading.Tasks;
+
+using OpenSim.Framework;
+using OpenSim.Services.Interfaces;
+using OpenSim.Services.Base;
 
 using OpenMetaverse.StructuredData;
 using OpenMetaverse;
@@ -35,7 +24,7 @@ using OpenMetaverse;
 using Nini.Config;
 using log4net;
 
-namespace osWebRtcVoice
+namespace WebRtcVoice
 {
     // Encapsulization of a Session to the Janus server
     public class JanusPlugin : IDisposable
@@ -50,7 +39,7 @@ namespace osWebRtcVoice
         public string PluginId { get; private set; }
         public string PluginUri { get ; private set ; }
 
-        public bool IsConnected => !string.IsNullOrEmpty(PluginId);
+        public bool IsConnected => !String.IsNullOrEmpty(PluginId);
 
         // Wrapper around the session connection to Janus-gateway
         public JanusPlugin(JanusSession pSession, string pPluginName)
@@ -88,13 +77,13 @@ namespace osWebRtcVoice
             bool ret = false;
             try
             {
-                JanusMessageResp resp = await _JanusSession.SendToSession(new AttachPluginReq(PluginName)).ConfigureAwait(false);
+                var resp = await _JanusSession.SendToSession(new AttachPluginReq(PluginName));
                 if (resp is not null && resp.isSuccess)
                 {
-                    AttachPluginResp handleResp = new(resp);
+                    var handleResp = new AttachPluginResp(resp);
                     PluginId = handleResp.pluginId;
                     PluginUri = _JanusSession.SessionUri + "/" + PluginId;
-                    m_log.Debug($"{LogHeader} Activate. Plugin attached. ID={PluginId}, URL={PluginUri}");
+                    m_log.DebugFormat("{0} Activate. Plugin attached. ID={1}, URL={2}", LogHeader, PluginId, PluginUri);
                     _JanusSession.PluginId = PluginId;
                     _JanusSession.OnEvent += Handle_Event;
                     _JanusSession.OnMessage += Handle_Message;
@@ -102,12 +91,12 @@ namespace osWebRtcVoice
                 }
                 else
                 {
-                    m_log.Error($"{LogHeader} Activate: failed to attach to plugin {PluginName}");
+                    m_log.ErrorFormat("{0} Activate: failed to attach to plugin {1}", LogHeader, PluginName);
                 }
             }
             catch (Exception e)
             {
-                m_log.Error($"{LogHeader} Activate: exception attaching to plugin {PluginName}:", e);
+                m_log.ErrorFormat("{0} Activate: exception attaching to plugin {1}: {2}", LogHeader, PluginName, e);
             }
 
             return ret;
@@ -118,7 +107,7 @@ namespace osWebRtcVoice
             bool ret = false;
             if (!IsConnected || _JanusSession is null)
             {
-                m_log.Warn($"{LogHeader} Detach. Not connected");
+                m_log.WarnFormat("{0} Detach. Not connected", LogHeader);
                 return ret;
             }
             try
@@ -126,20 +115,20 @@ namespace osWebRtcVoice
                 _JanusSession.OnEvent -= Handle_Event;
                 _JanusSession.OnMessage -= Handle_Message;
                 // We send the 'detach' message to the plugin URI
-                JanusMessageResp resp = await _JanusSession.SendToJanus(new DetachPluginReq(), PluginUri).ConfigureAwait(false);
+                var resp = await _JanusSession.SendToJanus(new DetachPluginReq(), PluginUri);
                 if (resp is not null && resp.isSuccess)
                 {
-                    m_log.Debug($"{LogHeader} Detach. Detached");
+                    m_log.DebugFormat("{0} Detach. Detached", LogHeader);
                     ret = true;
                 }
                 else
                 {
-                    m_log.Error($"{LogHeader} Detach: failed");
+                    m_log.ErrorFormat("{0} Detach: failed", LogHeader);
                 }
             }
             catch (Exception e)
             {
-                m_log.Error($"{LogHeader} Detach: exception", e);
+                m_log.ErrorFormat("{0} Detach: exception {1}", LogHeader, e);
             }
 
             return ret;
@@ -147,11 +136,11 @@ namespace osWebRtcVoice
 
         public virtual void Handle_Event(JanusMessageResp pResp)
         {
-            m_log.Debug($"{LogHeader} Handle_Event: {pResp}");
+            m_log.DebugFormat("{0} Handle_Event: {1}", LogHeader, pResp.ToString());
         }
         public virtual void Handle_Message(JanusMessageResp pResp)
         {
-            m_log.Debug($"{LogHeader} Handle_Message: {pResp}");
+            m_log.DebugFormat("{0} Handle_Message: {1}", LogHeader, pResp.ToString());
         }
     }
 }
