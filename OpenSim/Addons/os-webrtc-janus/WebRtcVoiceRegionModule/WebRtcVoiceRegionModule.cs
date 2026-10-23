@@ -72,8 +72,8 @@ namespace osWebRtcVoice
         private static byte[] llsdEmpyAnswerBytes = Util.UTF8.GetBytes("<llsd><array /></llsd>");
         private bool _MessageDetails = false;
 
-        // Experimental BloodMoon P2P signalling, restricted to one scene.
-        private bool m_BloodMoonP2PVoice = false;
+        // Experimental P2P signalling, restricted to one scene.
+        private bool m_EnableP2PVoice = true;
         private readonly object m_P2PLock = new();
         private readonly Dictionary<UUID, P2PVoiceCall> m_P2PCalls = new();
         private readonly Dictionary<string, (UUID Session, UUID Agent)> m_P2PViewerSessions = new();
@@ -156,7 +156,7 @@ namespace osWebRtcVoice
                     if (m_Enabled)
                     {
                         _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
-                        m_BloodMoonP2PVoice = m_Config.GetBoolean("BloodMoonP2PVoice", false);
+                        m_EnableP2PVoice = m_Config.GetBoolean("EnableP2PVoice", true);
                         m_log.Info($"{LogHeader} WebRtcVoiceService enabled");
                     }
                 }
@@ -474,8 +474,8 @@ namespace osWebRtcVoice
                         return ;
                     }
 
-                    if (m_BloodMoonP2PVoice)
-                        EndBloodMoonP2P(viewerSessionId, agentID);
+                    if (m_EnableP2PVoice)
+                        EndP2P(viewerSessionId, agentID);
 
                     OSDMap logoutresp = null;
                     if (VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
@@ -503,8 +503,8 @@ namespace osWebRtcVoice
                 //no session id.. new channel?
                 if (map.TryGetString("channel_type", out string channelType))
                 {
-                    if (m_BloodMoonP2PVoice && channelType != "local" &&
-                        !AuthorizeBloodMoonP2P(map, agentID, scene.ID))
+                    if (m_EnableP2PVoice && channelType != "local" &&
+                        !AuthorizeP2P(map, agentID, scene.ID))
                     {
                         response.StatusCode = (int)HttpStatusCode.Forbidden;
                         response.RawBuffer = llsdUndefAnswerBytes;
@@ -642,7 +642,7 @@ namespace osWebRtcVoice
                 return;
             }
 
-            if (m_BloodMoonP2PVoice && map.TryGetString("channel", out string privateChannel) &&
+            if (m_EnableP2PVoice && map.TryGetString("channel", out string privateChannel) &&
                 resp.TryGetString("viewer_session", out string privateViewerSession))
             {
                 lock (m_P2PLock)
@@ -792,13 +792,13 @@ namespace osWebRtcVoice
                 }
             }
 
-            if (m_BloodMoonP2PVoice &&
+            if (m_EnableP2PVoice &&
                 (method.Equals("call", StringComparison.OrdinalIgnoreCase) ||
                  method.Equals("accept invitation", StringComparison.OrdinalIgnoreCase) ||
                  method.Equals("decline p2p voice", StringComparison.OrdinalIgnoreCase) ||
                  method.Equals("decline invitation", StringComparison.OrdinalIgnoreCase)))
             {
-                HandleBloodMoonP2P(request, response, agentID, scene, sp, sessionID, method.ToLowerInvariant());
+                HandleP2P(request, response, agentID, scene, sp, sessionID, method.ToLowerInvariant());
                 return;
             }
 
@@ -892,20 +892,20 @@ namespace osWebRtcVoice
             }
         }
 
-        private void EndBloodMoonP2P(string viewerSession, UUID agentID)
+        private void EndP2P(string viewerSession, UUID agentID)
         {
             lock (m_P2PLock)
             {
                 if (!m_P2PViewerSessions.TryGetValue(viewerSession, out var owner) || owner.Agent != agentID)
                     return;
-                RemoveBloodMoonP2P(owner.Session);
-                m_log.Info($"{LogHeader} BloodMoon P2P ended: {owner.Session}");
+                RemoveP2P(owner.Session);
+                m_log.Info($"{LogHeader} P2P ended: {owner.Session}");
             }
         }
 
         // Call only while holding m_P2PLock. A declined/ended generation must
         // never invalidate a later call using the same deterministic IM UUID.
-        private void RemoveBloodMoonP2P(UUID sessionID)
+        private void RemoveP2P(UUID sessionID)
         {
             m_P2PCalls.Remove(sessionID);
             foreach (string key in m_P2PViewerSessions.Where(entry => entry.Value.Session == sessionID)
@@ -924,7 +924,7 @@ namespace osWebRtcVoice
             };
         }
 
-        private bool AuthorizeBloodMoonP2P(OSDMap map, UUID agentID, UUID sceneID)
+        private bool AuthorizeP2P(OSDMap map, UUID agentID, UUID sceneID)
         {
             if (!map.TryGetString("channel", out string channel) ||
                 !map.TryGetString("credentials", out string credentials))
@@ -943,7 +943,7 @@ namespace osWebRtcVoice
             return false;
         }
 
-        private void HandleBloodMoonP2P(IOSHttpRequest request, IOSHttpResponse response,
+        private void HandleP2P(IOSHttpRequest request, IOSHttpResponse response,
             UUID agentID, Scene scene, ScenePresence sp, UUID sessionID, string method)
         {
             if (sp.IsChildAgent || sessionID.IsZero())
@@ -958,7 +958,7 @@ namespace osWebRtcVoice
                 DateTime now = DateTime.UtcNow;
                 foreach (UUID expired in m_P2PCalls.Where(entry => entry.Value.Expires <= now)
                     .Select(entry => entry.Key).ToArray())
-                    RemoveBloodMoonP2P(expired);
+                    RemoveP2P(expired);
 
                 m_P2PCalls.TryGetValue(sessionID, out P2PVoiceCall call);
                 if (method == "call")
@@ -1010,14 +1010,14 @@ namespace osWebRtcVoice
                             response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
                             return;
                         }
-                        m_log.Info($"{LogHeader} BloodMoon P2P invitation queued: {sessionID}, {agentID} -> {peerID}");
+                        m_log.Info($"{LogHeader} P2P invitation queued: {sessionID}, {agentID} -> {peerID}");
                     }
                     else if (agentID == call.Callee)
                     {
                         // WebRTC P2P acceptance calls 'call' again, using the same IM session.
                         call.Accepted = true;
                         call.Expires = now.AddHours(12);
-                        m_log.Info($"{LogHeader} BloodMoon P2P accepted: {sessionID}");
+                        m_log.Info($"{LogHeader} P2P accepted: {sessionID}");
                     }
                     result["voice_credentials"] = P2PCredentials(call);
                 }
@@ -1042,8 +1042,8 @@ namespace osWebRtcVoice
                     }
                     else
                     {
-                        RemoveBloodMoonP2P(sessionID);
-                        m_log.Info($"{LogHeader} BloodMoon P2P declined: {sessionID}");
+                        RemoveP2P(sessionID);
+                        m_log.Info($"{LogHeader} P2P declined: {sessionID}");
                     }
                 }
             }

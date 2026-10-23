@@ -1,12 +1,12 @@
-name: BloodMoon WebRTC P2P test
+name: WebRTC P2P test
 
 on:
   push:
-    branches: ["bloodmoon/p2p-voice-test"]
+    branches: ["**"]
     paths:
       - "OpenSim/Addons/os-webrtc-janus/**"
-      - "bloodmoon-tests/**"
-      - ".github/workflows/bloodmoon-webrtc-test.yml"
+      - "webrtc-tests/**"
+      - ".github/workflows/webrtc-test.yml"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   build-test:
-    if: github.repository == 'Vlad-BloodMoon/opensim'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -27,24 +26,24 @@ jobs:
       - name: Build OpenSim
         run: dotnet build -c Release OpenSim.sln
       - name: Build guard tests
-        run: dotnet build -c Release bloodmoon-tests/P2PGuards.csproj
+        run: dotnet build -c Release webrtc-tests/P2PGuards.csproj
       - name: Run guard tests
-        run: dotnet bloodmoon-tests/bin/Release/net8.0/P2PGuards.dll bin
+        run: dotnet webrtc-tests/bin/Release/net8.0/P2PGuards.dll bin
       - name: Package experimental region module
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p bloodmoon-package
-          cp bin/WebRtcVoiceRegionModule.dll bloodmoon-package/
-          cp bin/WebRtcVoiceRegionModule.pdb bloodmoon-package/
-          cp bloodmoon-tests/README.md bloodmoon-package/README.md
-          git rev-parse HEAD > bloodmoon-package/COMMIT.txt
-          cd bloodmoon-package
+          mkdir -p webrtc-package
+          cp bin/WebRtcVoiceRegionModule.dll webrtc-package/
+          cp bin/WebRtcVoiceRegionModule.pdb webrtc-package/
+          cp webrtc-tests/README.md webrtc-package/README.md
+          git rev-parse HEAD > webrtc-package/COMMIT.txt
+          cd webrtc-package
           sha256sum WebRtcVoiceRegionModule.dll WebRtcVoiceRegionModule.pdb > SHA256SUMS
           sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: bloodmoon-webrtc-p2p-test
-          path: bloodmoon-package/
+          name: webrtc-p2p-test
+          path: webrtc-package/
           if-no-files-found: error
           retention-days: 30

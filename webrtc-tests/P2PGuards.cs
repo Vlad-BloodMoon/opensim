@@ -29,7 +29,7 @@ class P2PGuards
         IDictionary calls = (IDictionary)moduleType.GetField("m_P2PCalls", hidden).GetValue(module);
         UUID session = UUID.Random();
         calls.Add(session, call);
-        MethodInfo authorize = moduleType.GetMethod("AuthorizeBloodMoonP2P", hidden);
+        MethodInfo authorize = moduleType.GetMethod("AuthorizeP2P", hidden);
         OSDMap request = new() { ["channel"] = OSD.FromString("private-test-channel"), ["credentials"] = OSD.FromString("private-test-secret") };
         int count = 0;
         void Check(string label, UUID agent, UUID region, bool expected) {
@@ -51,7 +51,7 @@ class P2PGuards
         Set("Expires", DateTime.UtcNow.AddMinutes(2));
         IDictionary viewers = (IDictionary)moduleType.GetField("m_P2PViewerSessions", hidden).GetValue(module);
         viewers.Add("viewer-test", (session, caller));
-        MethodInfo endCall = moduleType.GetMethod("EndBloodMoonP2P", hidden);
+        MethodInfo endCall = moduleType.GetMethod("EndP2P", hidden);
         endCall.Invoke(module, new object[] { "viewer-test", UUID.Random() });
         Check("other avatar cannot end call", caller, scene, true);
         endCall.Invoke(module, new object[] { "viewer-test", caller });
