@@ -1,7 +1,7 @@
-name: Build WebRTC integration modules
+name: Build group voice invitation test modules
 on:
   push:
-    branches: ["integration/webrtc-1.2.0"]
+    branches: ["fix/group-voice-invitations"]
     paths: ["OpenSim/Addons/os-webrtc-janus/**", ".github/workflows/webrtc-integration.yml"]
   workflow_dispatch:
 permissions:
@@ -16,6 +16,8 @@ jobs:
         with:
           dotnet-version: "8.0.x"
       - run: bash runprebuild.sh
+      - name: Test authenticated group invitation transport
+        run: dotnet run --project OpenSim/Addons/os-webrtc-janus/WebRtcVoiceRegionModule/Tests/GroupVoiceInvitations/GroupVoiceInvitations.csproj -c Release
       - run: dotnet build -c Release OpenSim.sln
       - name: Package matching modules
         run: |
@@ -24,13 +26,13 @@ jobs:
           for module in WebRtcVoice WebRtcVoiceRegionModule WebRtcVoiceServiceModule; do
             cp "bin/$module.dll" "bin/$module.pdb" package/
           done
-          cp OpenSim/Addons/os-webrtc-janus/INTEGRATION.md package/README.md
+          cp OpenSim/Addons/os-webrtc-janus/GROUP_VOICE_TEST.md package/README.md
           git rev-parse HEAD > package/COMMIT.txt
           cd package
           sha256sum *.dll *.pdb > SHA256SUMS
           sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: webrtc-1.2.0-integration-modules
+          name: webrtc-group-voice-invitations-test
           path: package/
           if-no-files-found: error

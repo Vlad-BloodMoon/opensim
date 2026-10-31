@@ -155,6 +155,7 @@ namespace WebRtcVoice
                 // [WOLF CALLS 2026-10-19] Call invitations arriving from other regions.
                 lock (m_Scenes) m_Scenes.Add(scene);
                 scene.EventManager.OnIncomingInstantMessage += OnIncomingCallInvitation;
+                scene.EventManager.OnIncomingInstantMessage += OnIncomingGroupVoiceInvitation;
 
                 // [WOLF GROUP CALLS 2026-10-20] conference text typed here, and conference deliveries from
                 // other regions (WolfConference.cs).
@@ -173,6 +174,7 @@ namespace WebRtcVoice
         {
             lock (m_Scenes) m_Scenes.Remove(scene);
             scene.EventManager.OnIncomingInstantMessage -= OnIncomingCallInvitation;
+            scene.EventManager.OnIncomingInstantMessage -= OnIncomingGroupVoiceInvitation;
             scene.EventManager.OnIncomingInstantMessage -= OnIncomingConference;
             scene.EventManager.OnMakeRootAgent -= OnMakeRootAgentConf;
             scene.EventManager.OnMakeChildAgent -= OnMakeChildAgentConf;
