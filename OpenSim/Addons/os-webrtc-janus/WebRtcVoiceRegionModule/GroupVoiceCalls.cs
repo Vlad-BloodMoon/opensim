@@ -8,7 +8,7 @@ using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
-using OpenSim.Services.Interfaces;
+using PresenceInfo = OpenSim.Services.Interfaces.PresenceInfo;
 
 namespace WebRtcVoice
 {
