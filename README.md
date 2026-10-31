@@ -1,5 +1,10 @@
 # WebRTC voice module release
 
+**Français : [téléchargements compilés](https://github.com/Vlad-BloodMoon/wolfvoice/blob/main/docs/TELECHARGEMENTS_FR.md) · [installation pas à pas sur votre propre grille](https://github.com/Vlad-BloodMoon/wolfvoice/blob/main/docs/INSTALLATION_FR.md).**
+
+[Download the compiled DLL/PDB ZIP](https://github.com/Vlad-BloodMoon/opensim/releases/download/v0.9.3.1-webrtc.1/WebRTC_Modules_0.9.3.1.zip) · [SHA256](https://github.com/Vlad-BloodMoon/opensim/releases/download/v0.9.3.1-webrtc.1/WebRTC_Modules_0.9.3.1.zip.sha256).
+No compilation is required for this OpenSim 0.9.3.1 / .NET 8 package. The current matching voice server is [WolfVoice v0.2.0-bloodmoon.2](https://github.com/Vlad-BloodMoon/wolfvoice/releases/tag/v0.2.0-bloodmoon.2), with the spatial-axis fix. Each independent grid must use its own server configuration and privately distributed keys.
+
 [Download v0.9.3.1-webrtc.1](https://github.com/Vlad-BloodMoon/opensim/releases/tag/v0.9.3.1-webrtc.1) - matching WebRTC DLL/PDB pairs for OpenSim 0.9.3.1 (.NET 8), with private IM voice calls. See [installation and validation](OpenSim/Addons/os-webrtc-janus/INTEGRATION.md). No grid key is included.
 
 Welcome to OpenSimulator (OpenSim for short)!
