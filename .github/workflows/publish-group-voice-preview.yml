@@ -1,0 +1,82 @@
+name: Publish group voice preview
+on:
+  push:
+    branches: [publish/webrtc-group-voice-preview]
+    paths: [.github/workflows/publish-group-voice-preview.yml]
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  release:
+    if: github.repository == 'Vlad-BloodMoon/opensim' && github.ref == 'refs/heads/publish/webrtc-group-voice-preview'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Verify and publish the tested package
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=07fca6e6e50d8998e61f3fb066f39013281216ba
+          tag=v0.9.3.1-webrtc-group-voice-preview.1
+          test "$(gh api "repos/$GH_REPO/actions/runs/41838547933" --jq .head_sha)" = "$commit"
+          test "$(gh api "repos/$GH_REPO/actions/runs/41838547933" --jq .conclusion)" = success
+          gh api "repos/$GH_REPO/actions/artifacts/13326673303/zip" > webrtc-group-recall-fix.zip
+          sha256sum webrtc-group-recall-fix.zip > SHA256SUMS
+          echo 'e66b15d8cda19d76b894a1e033f5c5ba0b225d7ce7c6a481ed3f3269b207055c  webrtc-group-recall-fix.zip' | sha256sum -c -
+          mkdir checked
+          unzip -q webrtc-group-recall-fix.zip -d checked
+          test "$(cat checked/COMMIT.txt)" = "$commit"
+          (cd checked && sha256sum --strict -c SHA256SUMS)
+          cat > README.md <<'RELEASE_NOTES'
+          # OpenSim group voice invitations — deployment preview
+          
+          This preview adds voice invitations for existing OpenSim groups. An online
+          group member with voice rights can accept an invitation from another region
+          and join the same call. A member rejoining does not ring participants already
+          connected to that group call.
+          
+          ## Which package to use
+          
+          Use `webrtc-group-recall-fix.zip`, built from
+          `07fca6e6e50d8998e61f3fb066f39013281216ba`. The earlier
+          `webrtc-group-voice-invitations-test.zip` predates the rejoin fix.
+          The separate `webrtc-sandbox-no-pooling.zip` was a transport experiment
+          and is not part of this deployment.
+          
+          ## Install on compatible simulators
+          
+          1. Verify the archive's `SHA256SUMS` and check `COMMIT.txt` against the commit above.
+          2. On a simulator already running the compatible WebRTC 1.2.0 integration
+             modules, stop OpenSim and back up `bin/WebRtcVoiceRegionModule.dll` and its
+             `.pdb` if present.
+          3. Replace only `WebRtcVoiceRegionModule.dll` and its matching `.pdb` in `bin/`.
+             Leave the existing WebRTC configuration, keys, and other modules in place.
+          4. Restart the simulator. Verify proximity voice, a private call, then a group
+             call between two updated simulators. Check that leaving and rejoining does
+             not ring members who stayed in the call.
+          
+          Both regions need the updated regional module for cross-region invitations.
+          No WolfVoice server update is required. Ad hoc conferences are outside the
+          scope of this change.
+          
+          ## Known Firestorm issues
+          
+          - After a successful group call, hanging up can show **No Answer** even
+            though the caller returns to proximity voice. The message has also been
+            reproduced without an HTTP error in the simulator log. Disabling HTTP
+            connection reuse did not resolve it in the observed test. The exact
+            Firestorm event that triggers the message has not been identified.
+          - For some invited participants, the hang-up button in the group IM window
+            can remain disabled. Use the red hang-up button in the voice participants
+            panel, accessible via the headset icon.
+          
+          Reports are welcome on the
+          [group voice pull request](https://github.com/Vlad-BloodMoon/opensim/pull/3).
+          Include the Firestorm version, whether you started or accepted the call,
+          which hang-up button you used, and whether proximity voice returned.
+          If sharing logs, redact capability URLs, credentials, and session tokens.
+          RELEASE_NOTES
+          gh release create "$tag" webrtc-group-recall-fix.zip README.md SHA256SUMS --target "$commit" --prerelease --latest=false --title 'OpenSim WebRTC group voice — Preview 1' --notes-file README.md
