@@ -52,8 +52,9 @@ namespace WebRtcVoice
                 UseCookies = false,
                 UseProxy = false,
                 ConnectTimeout = TimeSpan.FromSeconds(10),
-                PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
-                PooledConnectionLifetime = TimeSpan.FromMinutes(3),
+                // WolfVoice closes HTTP/1 connections after each reply.
+                // Don't lend a closing connection to another voice request.
+                PooledConnectionLifetime = TimeSpan.Zero,
             };
             // Revocation: the same NoCheck WebUtil uses (WebUtil.cs:132/152); Let's Encrypt no longer
             // runs OCSP, and a CRL fetch on the voice path would add a network dependency.
