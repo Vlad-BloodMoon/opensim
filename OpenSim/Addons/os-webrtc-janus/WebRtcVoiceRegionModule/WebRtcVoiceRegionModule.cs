@@ -156,6 +156,7 @@ namespace WebRtcVoice
                 lock (m_Scenes) m_Scenes.Add(scene);
                 scene.EventManager.OnIncomingInstantMessage += OnIncomingCallInvitation;
                 scene.EventManager.OnIncomingInstantMessage += OnIncomingGroupVoiceInvitation;
+                scene.EventManager.OnClientClosed += OnGroupVoiceClientClosed;
 
                 // [WOLF GROUP CALLS 2026-10-20] conference text typed here, and conference deliveries from
                 // other regions (WolfConference.cs).
@@ -175,6 +176,7 @@ namespace WebRtcVoice
             lock (m_Scenes) m_Scenes.Remove(scene);
             scene.EventManager.OnIncomingInstantMessage -= OnIncomingCallInvitation;
             scene.EventManager.OnIncomingInstantMessage -= OnIncomingGroupVoiceInvitation;
+            scene.EventManager.OnClientClosed -= OnGroupVoiceClientClosed;
             scene.EventManager.OnIncomingInstantMessage -= OnIncomingConference;
             scene.EventManager.OnMakeRootAgent -= OnMakeRootAgentConf;
             scene.EventManager.OnMakeChildAgent -= OnMakeChildAgentConf;
@@ -406,6 +408,10 @@ namespace WebRtcVoice
                 }
             }
 
+            // The viewer has left this exact call, even if forwarding its logout fails.
+            if (logout && map.TryGetValue("viewer_session", out OSD leavingGroupSession))
+                ForgetGroupVoiceSession(agentID, leavingGroupSession.AsString());
+
             // The checks passed. Send the request to the voice service.
             OSDMap resp = voiceService.ProvisionVoiceAccountRequest(map, agentID, scene.RegionInfo.RegionID).Result;
 
@@ -431,6 +437,11 @@ namespace WebRtcVoice
                 response.StatusCode = (int)HttpStatusCode.Conflict;
                 return;
             }
+            if (!logout && channelType == "multiagent" && !resp.ContainsKey("error")
+                && map.TryGetValue("channel", out OSD groupChannel)
+                && resp.TryGetValue("viewer_session", out OSD groupSession))
+                TrackGroupVoiceSession(agentID, scene.RegionInfo.RegionID, groupChannel.AsString(), groupSession.AsString());
+
             // A session opened through this region: ask wolfvoice about the avatar at the next feed tick.
             if (!logout && channelType == "local" && resp.ContainsKey("viewer_session") && !resp.ContainsKey("error"))
                 FeedNote(agentID);

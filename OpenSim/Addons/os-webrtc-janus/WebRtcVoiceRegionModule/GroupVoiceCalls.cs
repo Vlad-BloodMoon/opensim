@@ -18,6 +18,30 @@ namespace WebRtcVoice
         private readonly object m_GroupVoiceLock = new object();
         private readonly Dictionary<UUID, DateTime> m_GroupVoiceNotified = new Dictionary<UUID, DateTime>();
         private readonly Dictionary<string, DateTime> m_GroupVoiceNonces = new Dictionary<string, DateTime>();
+        private readonly Dictionary<UUID, (UUID Group, string Session, UUID Region)> m_GroupVoiceSessions = new();
+
+        private void TrackGroupVoiceSession(UUID agent, UUID region, string channel, string session)
+        {
+            if (session.Length == 0 || !channel.StartsWith("group-", StringComparison.Ordinal)
+                || !UUID.TryParse(channel.Substring(6), out UUID group) || group.IsZero()) return;
+            lock (m_GroupVoiceLock)
+                m_GroupVoiceSessions[agent] = (group, session, region);
+        }
+
+        private void ForgetGroupVoiceSession(UUID agent, string session)
+        {
+            lock (m_GroupVoiceLock)
+                if (m_GroupVoiceSessions.TryGetValue(agent, out var current) && current.Session == session)
+                    m_GroupVoiceSessions.Remove(agent);
+        }
+
+        private void OnGroupVoiceClientClosed(UUID agent, Scene scene)
+        {
+            lock (m_GroupVoiceLock)
+                if (m_GroupVoiceSessions.TryGetValue(agent, out var current) && current.Region == scene.RegionInfo.RegionID)
+                    m_GroupVoiceSessions.Remove(agent);
+        }
+
         private const int GROUP_VOICE_CACHE_MAX = 4096;
 
         // Joining a call via an invitation uses its channel info directly, so it does not
@@ -179,7 +203,16 @@ namespace WebRtcVoice
                 };
                 // Match Firestorm's VoiceInviteGroup flow; the existing IM session keeps its group id.
                 OSD evt = new OSDMap { { "message", OSD.FromString("ChatterBoxInvitation") }, { "body", body } };
-                queue.Enqueue(evt, recipient);
+                lock (m_GroupVoiceLock)
+                {
+                    // A new ring can make the viewer replace the live group call UI.
+                    if (m_GroupVoiceSessions.TryGetValue(recipient, out var current) && current.Group == group)
+                    {
+                        m_log.InfoFormat("{0}[GROUP CALL]: skipped {1}; already in group {2}", logHeader, recipient, group);
+                        return true;
+                    }
+                    queue.Enqueue(evt, recipient);
+                }
                 m_log.InfoFormat("{0}[GROUP CALL]: rang {1} for group {2} in {3}",
                     logHeader, recipient, group, scene.RegionInfo.RegionName);
                 return true;
