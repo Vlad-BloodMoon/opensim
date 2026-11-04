@@ -1,7 +1,7 @@
-name: Build WebRTC integration modules
+name: Build Sandbox WolfVoice transport test
 on:
   push:
-    branches: ["integration/webrtc-1.2.0"]
+    branches: ["test/sandbox-wolfvoice-no-pooling"]
     paths: ["OpenSim/Addons/os-webrtc-janus/**", ".github/workflows/webrtc-integration.yml"]
   workflow_dispatch:
 permissions:
@@ -21,16 +21,13 @@ jobs:
         run: |
           set -eu
           mkdir package
-          for module in WebRtcVoice WebRtcVoiceRegionModule WebRtcVoiceServiceModule; do
-            cp "bin/$module.dll" "bin/$module.pdb" package/
-          done
-          cp OpenSim/Addons/os-webrtc-janus/INTEGRATION.md package/README.md
+          cp bin/WebRtcVoice.dll bin/WebRtcVoice.pdb package/
           git rev-parse HEAD > package/COMMIT.txt
           cd package
           sha256sum *.dll *.pdb > SHA256SUMS
           sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: webrtc-1.2.0-integration-modules
+          name: webrtc-sandbox-no-pooling
           path: package/
           if-no-files-found: error
