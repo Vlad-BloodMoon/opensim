@@ -51,6 +51,11 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
         protected readonly List<Scene> m_scenes = new List<Scene>();
 
+        // The membership store is independent of the voice implementation.
+        // It is initially process-local; multi-simulator persistence and routing
+        // will be provided by a grid service before this feature is enabled.
+        private readonly AdHocConferenceSessions m_adHocSessions = new AdHocConferenceSessions();
+
         #region Region Module interface
 
         protected IMessageTransferModule m_TransferModule = null;
@@ -147,6 +152,33 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             if (m_TransferModule == null)
                 return;
 
+            // Only a client connected to this region may submit conference
+            // text. Never trust a forged sender id from the viewer.
+            if (client != null && im.dialog == (byte)InstantMessageDialog.SessionSend
+                && m_adHocSessions.TryGetForSender(new UUID(im.imSessionID), client.AgentId,
+                    out AdHocConferenceSessions.Snapshot conference))
+            {
+                foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
+                {
+                    if (member.Key == client.AgentId || member.Value != AdHocConferenceSessions.MemberState.Joined)
+                        continue;
+
+                    GridInstantMessage delivered = new GridInstantMessage(im, true);
+                    delivered.fromAgentID = client.AgentId.Guid;
+                    delivered.toAgentID = member.Key.Guid;
+                    delivered.offline = 0;
+                    m_TransferModule.SendInstantMessage(delivered, delegate(bool success) { });
+                }
+                return;
+            }
+
+            if (client != null && im.dialog == (byte)InstantMessageDialog.SessionDrop)
+            {
+                m_adHocSessions.TryLeave(new UUID(im.imSessionID), client.AgentId,
+                    out AdHocConferenceSessions.Snapshot _);
+                return;
+            }
+
             switch(im.dialog)
             {
                 case (byte)InstantMessageDialog.MessageFromAgent:
@@ -194,11 +226,46 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         }
 
         /// <summary>
+        /// First-stage membership API for the conference capability handler.
+        /// No session is made visible to the viewer until the caller has sent
+        /// its event-queue start reply and invitations.
+        /// </summary>
+        internal bool TryCreateAdHocConference(UUID sessionId, UUID creator, ICollection<UUID> invited,
+            out AdHocConferenceSessions.Snapshot conference)
+        {
+            return m_adHocSessions.TryCreate(sessionId, creator, invited, out conference);
+        }
+
+        /// <summary>
         ///
         /// </summary>
         /// <param name="msg"></param>
         protected virtual void OnGridInstantMessage(GridInstantMessage msg)
         {
+            // The normal IM handler intentionally ignores SessionSend. For an
+            // ad-hoc conference known to this process, deliver only to a joined
+            // recipient and only when the sender is also a joined member.
+            if (msg.dialog == (byte)InstantMessageDialog.SessionSend
+                && m_adHocSessions.TryGetForSender(new UUID(msg.imSessionID), new UUID(msg.fromAgentID),
+                    out AdHocConferenceSessions.Snapshot conference)
+                && conference.Members.TryGetValue(new UUID(msg.toAgentID), out AdHocConferenceSessions.MemberState state)
+                && state == AdHocConferenceSessions.MemberState.Joined)
+            {
+                lock (m_scenes)
+                {
+                    foreach (Scene scene in m_scenes)
+                    {
+                        ScenePresence recipient = scene.GetScenePresence(new UUID(msg.toAgentID));
+                        if (recipient != null && !recipient.IsChildAgent)
+                        {
+                            recipient.ControllingClient.SendInstantMessage(msg);
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
             // Just call the Text IM handler above
             // This event won't be raised unless we have that agent,
             // so we can depend on the above not trying to send
