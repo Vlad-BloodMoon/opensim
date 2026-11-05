@@ -514,14 +514,15 @@ namespace WebRtcVoice
             if (gm != null)
             {
                 // Group voice: a member whose active role may talk (GroupPowers.AllowVoiceChat, the viewer's
-                // GP_SESSION_VOICE = 1 << 27, roles_constants.h:145). No one is rung - the others press
-                // "Join call" in their own group window, which asks here for their own credential.
+                // GP_SESSION_VOICE = 1 << 27, roles_constants.h:145). Return the caller\'s credential
+                // and notify online voice-enabled members through their own region event queues.
                 if ((gm.GroupPowers & (ulong)GroupPowers.AllowVoiceChat) == 0)
                 {
                     response.StatusCode = (int)HttpStatusCode.Forbidden;
                     return true;
                 }
                 RespondCredentials(response, "group-" + session.ToString(), caller);
+                QueueGroupVoiceInvitations(scene, caller, session);
                 m_log.InfoFormat("{0}[CALL]: {1} joined group voice {2}", logHeader, caller, session);
                 return true;
             }

@@ -179,8 +179,19 @@ namespace WebRtcVoice
             }
             catch (Exception e)
             {
-                // The exception text only: never the request, which carries the relay key.
-                m_log.ErrorFormat("{0}: JsonRpc request '{1}' to {2} failed: {3}", LogHeader, method, uri, e.Message);
+                // Record typed transport diagnostics without logging the request, URI or secrets.
+                StringBuilder cause = new StringBuilder();
+                for (Exception current = e; current != null && cause.Length < 1024; current = current.InnerException)
+                {
+                    if (cause.Length > 0) cause.Append(" -> ");
+                    cause.Append(current.GetType().Name);
+                    if (current is HttpRequestException http)
+                        cause.Append(" HttpRequestError=").Append(http.HttpRequestError);
+                    if (current is System.Net.Sockets.SocketException socket)
+                        cause.Append(" SocketError=").Append(socket.SocketErrorCode);
+                    cause.Append(" HResult=0x").Append(current.HResult.ToString("X8"));
+                }
+                m_log.ErrorFormat("{0}[DIAG]: {1}: {2}", LogHeader, method, cause.ToString());
                 return Error(e.Message);
             }
         }
