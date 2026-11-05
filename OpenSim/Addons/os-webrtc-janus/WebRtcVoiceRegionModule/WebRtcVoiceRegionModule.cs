@@ -722,11 +722,31 @@ namespace WebRtcVoice
                 // LLTrans::getString, llimview.cpp:2566), so the viewer reports it at once instead of
                 // waiting out the 30 s timeout.
                 case "start conference":
-                    HandleStartConference(scene, agentID, sessionID, map);
+                    if (m_ConfUrl.Length == 0)
+                    {
+                        // Text-only conferences can be handled by OpenSimulator's
+                        // IM module without a voice or Wolf conference service.
+                        IAdHocConferenceModule textConferences = scene.RequestModuleInterface<IAdHocConferenceModule>();
+                        if (textConferences != null)
+                            textConferences.StartConference(scene, agentID, sessionID,
+                                UuidList(map.ContainsKey("params") ? map["params"] : null, agentID));
+                        else
+                            SendChatterBoxSessionStartReply(scene, agentID, sessionID,
+                                CONFERENCE_SESSION, string.Empty, false, "generic_request_error", false);
+                    }
+                    else
+                        HandleStartConference(scene, agentID, sessionID, map);
                     response.RawBuffer = Util.UTF8.GetBytes("<llsd><map /></llsd>");
                     return;
                 case "invite":
-                    HandleInvite(scene, agentID, sessionID, map);
+                    if (m_ConfUrl.Length == 0)
+                    {
+                        IAdHocConferenceModule textConferences = scene.RequestModuleInterface<IAdHocConferenceModule>();
+                        textConferences?.InviteToConference(scene, agentID, sessionID,
+                            UuidList(map.ContainsKey("params") ? map["params"] : null, agentID));
+                    }
+                    else
+                        HandleInvite(scene, agentID, sessionID, map);
                     response.RawBuffer = Util.UTF8.GetBytes("<llsd><undef /></llsd>");
                     return;
                 case "accept invitation":
@@ -737,11 +757,25 @@ namespace WebRtcVoice
                         response.RawBuffer = Util.UTF8.GetBytes("<llsd><undef /></llsd>");
                         return;
                     }
-                    HandleAccept(scene, agentID, sessionID, response);
+                    if (m_ConfUrl.Length == 0)
+                    {
+                        IAdHocConferenceModule textConferences = scene.RequestModuleInterface<IAdHocConferenceModule>();
+                        if (textConferences == null || !textConferences.AcceptInvitation(scene, agentID, sessionID))
+                            response.StatusCode = (int)HttpStatusCode.NotFound;
+                        else
+                            response.RawBuffer = Util.UTF8.GetBytes("<llsd><map><key>agent_info</key><map /></map></llsd>");
+                    }
+                    else
+                        HandleAccept(scene, agentID, sessionID, response);
                     return;
                 case "decline invitation":
                     if (!IsGroupSession(scene, agentID, sessionID))
-                        HandleLeave(scene, agentID, sessionID);
+                    {
+                        if (m_ConfUrl.Length == 0)
+                            scene.RequestModuleInterface<IAdHocConferenceModule>()?.DeclineInvitation(scene, agentID, sessionID);
+                        else
+                            HandleLeave(scene, agentID, sessionID);
+                    }
                     response.RawBuffer = Util.UTF8.GetBytes("<llsd><undef /></llsd>");
                     return;
                 // [WOLF CHAT 2026-10-20] a Wolf Chat voice room (WolfViewer's Wolf Chat window; optional,
