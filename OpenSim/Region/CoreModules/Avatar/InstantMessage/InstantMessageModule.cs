@@ -39,7 +39,7 @@ using OpenSim.Region.Framework.Scenes;
 namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 {
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "InstantMessageModule")]
-    public class InstantMessageModule : ISharedRegionModule
+    public class InstantMessageModule : ISharedRegionModule, IAdHocConferenceModule
     {
         private static readonly ILog m_log = LogManager.GetLogger(
                 MethodBase.GetCurrentMethod().DeclaringType);
@@ -80,6 +80,7 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
             lock (m_scenes)
                 m_scenes.Add(scene);
+            scene.RegisterModuleInterface<IAdHocConferenceModule>(this);
         }
 
         public virtual void RegionLoaded(Scene scene)
@@ -109,6 +110,8 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         {
             if (!m_enabled)
                 return;
+
+            scene.UnregisterModuleInterface<IAdHocConferenceModule>(this);
 
             lock (m_scenes)
             {
@@ -174,8 +177,7 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
             if (client != null && im.dialog == (byte)InstantMessageDialog.SessionDrop)
             {
-                m_adHocSessions.TryLeave(new UUID(im.imSessionID), client.AgentId,
-                    out AdHocConferenceSessions.Snapshot _);
+                DeclineInvitation(client.Scene, client.AgentId, new UUID(im.imSessionID));
                 return;
             }
 
@@ -234,6 +236,164 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             out AdHocConferenceSessions.Snapshot conference)
         {
             return m_adHocSessions.TryCreate(sessionId, creator, invited, out conference);
+        }
+
+        private ScenePresence FindRootPresence(UUID agentId)
+        {
+            lock (m_scenes)
+            {
+                foreach (Scene scene in m_scenes)
+                {
+                    ScenePresence sp = scene.GetScenePresence(agentId);
+                    if (sp != null && !sp.IsChildAgent)
+                        return sp;
+                }
+            }
+            return null;
+        }
+
+        private static void SendConferenceReply(Scene scene, UUID agent, UUID session,
+            string name, bool success)
+        {
+            IEventQueue eq = scene.RequestModuleInterface<IEventQueue>();
+            eq?.ChatterBoxSessionStartReply(session, name, 1, false, false,
+                session, success, success ? string.Empty : "generic_request_error", agent);
+        }
+
+        private static void SendConferenceRoster(Scene scene, UUID recipient,
+            AdHocConferenceSessions.Snapshot conference)
+        {
+            IEventQueue eq = scene.RequestModuleInterface<IEventQueue>();
+            if (eq == null)
+                return;
+            List<GroupChatListAgentUpdateData> updates = new List<GroupChatListAgentUpdateData>();
+            foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
+                if (member.Value == AdHocConferenceSessions.MemberState.Joined)
+                    updates.Add(new GroupChatListAgentUpdateData(member.Key, true, false, false, true));
+            if (updates.Count != 0)
+                eq.ChatterBoxSessionAgentListUpdates(conference.SessionId, recipient, updates);
+        }
+
+        private static void SendConferenceInvitation(Scene scene, UUID caller, string callerName,
+            UUID recipient, UUID session)
+        {
+            IEventQueue eq = scene.RequestModuleInterface<IEventQueue>();
+            string name = "Conference with " + callerName;
+            eq?.ChatterboxInvitation(session, name, caller, "(added you to this conversation)", recipient,
+                callerName, (byte)InstantMessageDialog.SessionSend,
+                (uint)Util.UnixTimeSinceEpoch(), false, 0, Vector3.Zero, 1,
+                session, false, Utils.StringToBytes(name));
+        }
+
+        public bool StartConference(Scene scene, UUID caller, UUID session, ICollection<UUID> invitees)
+        {
+            ScenePresence sender = FindRootPresence(caller);
+            if (sender == null || invitees == null || scene.RequestModuleInterface<IEventQueue>() == null)
+            {
+                SendConferenceReply(scene, caller, session, string.Empty, false);
+                return false;
+            }
+
+            // This first-stage implementation is deliberately restricted to
+            // avatars on the same simulator process. An external session service
+            // is required before cross-process invitations can be reliable.
+            foreach (UUID id in invitees)
+            {
+                if (id == caller || id.IsZero())
+                    continue;
+                if (FindRootPresence(id) == null)
+                {
+                    SendConferenceReply(scene, caller, session, string.Empty, false);
+                    return false;
+                }
+            }
+
+            if (!TryCreateAdHocConference(session, caller, invitees,
+                out AdHocConferenceSessions.Snapshot conference))
+            {
+                SendConferenceReply(scene, caller, session, string.Empty, false);
+                return false;
+            }
+
+            string name = "Conference with " + sender.Name;
+            SendConferenceReply(scene, caller, session, name, true);
+            SendConferenceRoster(scene, caller, conference);
+            foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
+            {
+                if (member.Key == caller)
+                    continue;
+                ScenePresence invited = FindRootPresence(member.Key);
+                if (invited != null)
+                    SendConferenceInvitation(invited.Scene, caller, sender.Name, member.Key, session);
+            }
+            return true;
+        }
+
+        public bool AcceptInvitation(Scene scene, UUID caller, UUID session)
+        {
+            if (!m_adHocSessions.TryJoin(session, caller,
+                out AdHocConferenceSessions.Snapshot conference))
+                return false;
+            SendConferenceRoster(scene, caller, conference);
+            foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
+            {
+                if (member.Key == caller || member.Value != AdHocConferenceSessions.MemberState.Joined)
+                    continue;
+                ScenePresence other = FindRootPresence(member.Key);
+                IEventQueue eq = other?.Scene.RequestModuleInterface<IEventQueue>();
+                eq?.ChatterBoxSessionAgentListUpdates(session, member.Key,
+                    new List<GroupChatListAgentUpdateData>
+                    {
+                        new GroupChatListAgentUpdateData(caller, true, false, false, true)
+                    });
+            }
+            return true;
+        }
+
+        public bool DeclineInvitation(Scene scene, UUID caller, UUID session)
+        {
+            if (!m_adHocSessions.TryLeave(session, caller,
+                out AdHocConferenceSessions.Snapshot conference))
+                return false;
+            if (conference != null)
+            {
+                foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
+                {
+                    if (member.Value != AdHocConferenceSessions.MemberState.Joined)
+                        continue;
+                    ScenePresence other = FindRootPresence(member.Key);
+                    IEventQueue eq = other?.Scene.RequestModuleInterface<IEventQueue>();
+                    eq?.ChatterBoxSessionAgentListUpdates(session, member.Key,
+                        new List<GroupChatListAgentUpdateData>
+                        {
+                            new GroupChatListAgentUpdateData(caller, false, false, false, false)
+                        });
+                }
+            }
+            return true;
+        }
+
+        public bool InviteToConference(Scene scene, UUID caller, UUID session,
+            ICollection<UUID> invitees)
+        {
+            if (invitees == null)
+                return false;
+            foreach (UUID id in invitees)
+                if (FindRootPresence(id) == null)
+                    return false;
+            if (!m_adHocSessions.TryInvite(session, caller, invitees,
+                out AdHocConferenceSessions.Snapshot conference))
+                return false;
+            ScenePresence sender = FindRootPresence(caller);
+            if (sender == null)
+                return false;
+            foreach (UUID id in invitees)
+            {
+                ScenePresence invited = FindRootPresence(id);
+                if (invited != null)
+                    SendConferenceInvitation(invited.Scene, caller, sender.Name, id, session);
+            }
+            return true;
         }
 
         /// <summary>
