@@ -674,6 +674,12 @@ namespace OpenSim.Groups
                 UUID GroupID = new(im.imSessionID);
                 UUID AgentID = new(im.fromAgentID);
 
+                // SessionSend is shared by group chats and temporary ad-hoc
+                // conferences. Only claim sessions which are actual groups;
+                // otherwise the conference handler must be able to route them.
+                if (m_groupData.GetGroupRecord(UUID.Zero.ToString(), GroupID, null) == null)
+                    return;
+
                 if (m_debugEnabled)
                     m_log.DebugFormat("[Groups.Messaging]: Send message to session for group {0} with session ID {1}", GroupID, im.imSessionID.ToString());
 
