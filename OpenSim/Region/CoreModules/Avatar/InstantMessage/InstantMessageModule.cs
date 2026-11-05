@@ -60,6 +60,10 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         // It is initially process-local; multi-simulator persistence and routing
         // will be provided by a grid service before this feature is enabled.
         private readonly AdHocConferenceSessions m_adHocSessions = new AdHocConferenceSessions();
+        private AdHocConferenceRemoteClient m_remoteConferences;
+        private const string ADHOC_INVITE_MARKER = "opensim-adhoc-invite-v1";
+        private const string ADHOC_JOIN_MARKER = "opensim-adhoc-join-v1";
+        private const string ADHOC_LEAVE_MARKER = "opensim-adhoc-leave-v1";
 
         #region Region Module interface
 
@@ -81,6 +85,22 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             // Otherwise the core IM module can expose the text-only capability.
             IConfig webrtc = config.Configs["WebRtcVoice"];
             m_registerAdHocCaps = webrtc == null || !webrtc.GetBoolean("Enabled", false);
+
+            IConfig conferenceConfig = config.Configs["AdHocConferences"];
+            string serviceUrl = conferenceConfig?.GetString("ServiceUrl", string.Empty).Trim();
+            if (!string.IsNullOrEmpty(serviceUrl))
+            {
+                string keyFile = conferenceConfig.GetString("KeyFile", string.Empty);
+                try
+                {
+                    m_remoteConferences = new AdHocConferenceRemoteClient(serviceUrl, keyFile);
+                    m_log.Info("[INSTANT MESSAGE]: using grid-wide ad-hoc conference registry");
+                }
+                catch (Exception e)
+                {
+                    m_log.ErrorFormat("[INSTANT MESSAGE]: ad-hoc conference registry disabled: {0}", e.Message);
+                }
+            }
         }
 
         public virtual void AddRegion(Scene scene)
@@ -168,6 +188,37 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             if (m_TransferModule == null)
                 return;
 
+            if (client != null && im.dialog == (byte)InstantMessageDialog.SessionSend
+                && m_remoteConferences != null)
+            {
+                Scene scene = client.Scene;
+                UUID sender = client.AgentId;
+                UUID session = new UUID(im.imSessionID);
+                GridInstantMessage original = new GridInstantMessage(im, true);
+                Util.FireAndForget(delegate
+                {
+                    if (!m_remoteConferences.TryRequest(scene, "members", sender, session, null,
+                        out AdHocConferenceSessions.Snapshot conference))
+                        return;
+                    if (!conference.Members.TryGetValue(sender, out AdHocConferenceSessions.MemberState membership)
+                        || membership != AdHocConferenceSessions.MemberState.Joined)
+                        return;
+                    foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
+                    {
+                        if (member.Key == sender || member.Value != AdHocConferenceSessions.MemberState.Joined)
+                            continue;
+                        GridInstantMessage delivered = new GridInstantMessage(original, true);
+                        delivered.fromAgentID = sender.Guid;
+                        delivered.fromAgentName = client.Name;
+                        delivered.fromGroup = false;
+                        delivered.toAgentID = member.Key.Guid;
+                        delivered.offline = 0;
+                        m_TransferModule.SendInstantMessage(delivered, delegate(bool success) { });
+                    }
+                }, null, "AdHocConferenceSend");
+                return;
+            }
+
             // Only a client connected to this region may submit conference
             // text. Never trust a forged sender id from the viewer.
             if (client != null && im.dialog == (byte)InstantMessageDialog.SessionSend
@@ -192,7 +243,10 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
             if (client != null && im.dialog == (byte)InstantMessageDialog.SessionDrop)
             {
-                DeclineInvitation(client.Scene, client.AgentId, new UUID(im.imSessionID));
+                Scene scene = client.Scene;
+                UUID agent = client.AgentId;
+                UUID session = new UUID(im.imSessionID);
+                Util.FireAndForget(delegate { DeclineInvitation(scene, agent, session); }, null, "AdHocConferenceLeave");
                 return;
             }
 
@@ -386,6 +440,44 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
                 session, false, Utils.StringToBytes(name));
         }
 
+        private void DeliverConferenceInvitation(Scene scene, UUID caller, string callerName,
+            UUID recipient, UUID session)
+        {
+            ScenePresence local = FindRootPresence(recipient);
+            if (local != null)
+            {
+                SendConferenceInvitation(local.Scene, caller, callerName, recipient, session);
+                return;
+            }
+
+            GridInstantMessage signal = new GridInstantMessage(scene, caller, callerName,
+                recipient, (byte)InstantMessageDialog.SessionAdd, false,
+                ADHOC_INVITE_MARKER, session, false, Vector3.Zero,
+                Array.Empty<byte>(), true);
+            m_TransferModule.SendInstantMessage(signal, delegate(bool success) { });
+        }
+
+        private void NotifyConferenceMember(Scene scene, UUID changed, UUID recipient,
+            UUID session, bool joined)
+        {
+            ScenePresence local = FindRootPresence(recipient);
+            if (local != null)
+            {
+                IEventQueue eq = local.Scene.RequestModuleInterface<IEventQueue>();
+                eq?.ChatterBoxSessionAgentListUpdates(session, recipient,
+                    new List<GroupChatListAgentUpdateData>
+                    {
+                        new GroupChatListAgentUpdateData(changed, joined, false, false, joined)
+                    });
+                return;
+            }
+            GridInstantMessage notice = new GridInstantMessage(scene, changed, string.Empty,
+                recipient, (byte)InstantMessageDialog.SessionAdd, false,
+                joined ? ADHOC_JOIN_MARKER : ADHOC_LEAVE_MARKER,
+                session, false, Vector3.Zero, Array.Empty<byte>(), true);
+            m_TransferModule.SendInstantMessage(notice, delegate(bool success) { });
+        }
+
         public bool StartConference(Scene scene, UUID caller, UUID session, ICollection<UUID> invitees)
         {
             ScenePresence sender = FindRootPresence(caller);
@@ -393,6 +485,22 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             {
                 SendConferenceReply(scene, caller, session, string.Empty, false);
                 return false;
+            }
+
+            if (m_remoteConferences != null)
+            {
+                if (!m_remoteConferences.TryRequest(scene, "start", caller, session, invitees,
+                    out AdHocConferenceSessions.Snapshot shared))
+                {
+                    SendConferenceReply(scene, caller, session, string.Empty, false);
+                    return false;
+                }
+                SendConferenceReply(scene, caller, session, "Conference with " + sender.Name, true);
+                SendConferenceRoster(scene, caller, shared);
+                foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in shared.Members)
+                    if (member.Key != caller)
+                        DeliverConferenceInvitation(scene, caller, sender.Name, member.Key, session);
+                return true;
             }
 
             // This first-stage implementation is deliberately restricted to
@@ -432,29 +540,29 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
         public bool AcceptInvitation(Scene scene, UUID caller, UUID session)
         {
-            if (!m_adHocSessions.TryJoin(session, caller,
-                out AdHocConferenceSessions.Snapshot conference))
+            AdHocConferenceSessions.Snapshot conference;
+            bool accepted = m_remoteConferences != null
+                ? m_remoteConferences.TryRequest(scene, "accept", caller, session, null, out conference)
+                : m_adHocSessions.TryJoin(session, caller, out conference);
+            if (!accepted)
                 return false;
             SendConferenceRoster(scene, caller, conference);
             foreach (KeyValuePair<UUID, AdHocConferenceSessions.MemberState> member in conference.Members)
             {
                 if (member.Key == caller || member.Value != AdHocConferenceSessions.MemberState.Joined)
                     continue;
-                ScenePresence other = FindRootPresence(member.Key);
-                IEventQueue eq = other?.Scene.RequestModuleInterface<IEventQueue>();
-                eq?.ChatterBoxSessionAgentListUpdates(session, member.Key,
-                    new List<GroupChatListAgentUpdateData>
-                    {
-                        new GroupChatListAgentUpdateData(caller, true, false, false, true)
-                    });
+                NotifyConferenceMember(scene, caller, member.Key, session, true);
             }
             return true;
         }
 
         public bool DeclineInvitation(Scene scene, UUID caller, UUID session)
         {
-            if (!m_adHocSessions.TryLeave(session, caller,
-                out AdHocConferenceSessions.Snapshot conference))
+            AdHocConferenceSessions.Snapshot conference;
+            bool left = m_remoteConferences != null
+                ? m_remoteConferences.TryRequest(scene, "leave", caller, session, null, out conference)
+                : m_adHocSessions.TryLeave(session, caller, out conference);
+            if (!left)
                 return false;
             if (conference != null)
             {
@@ -462,13 +570,7 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
                 {
                     if (member.Value != AdHocConferenceSessions.MemberState.Joined)
                         continue;
-                    ScenePresence other = FindRootPresence(member.Key);
-                    IEventQueue eq = other?.Scene.RequestModuleInterface<IEventQueue>();
-                    eq?.ChatterBoxSessionAgentListUpdates(session, member.Key,
-                        new List<GroupChatListAgentUpdateData>
-                        {
-                            new GroupChatListAgentUpdateData(caller, false, false, false, false)
-                        });
+                    NotifyConferenceMember(scene, caller, member.Key, session, false);
                 }
             }
             return true;
@@ -479,21 +581,28 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         {
             if (invitees == null)
                 return false;
-            foreach (UUID id in invitees)
-                if (FindRootPresence(id) == null)
+            AdHocConferenceSessions.Snapshot conference;
+            if (m_remoteConferences != null)
+            {
+                if (!m_remoteConferences.TryRequest(scene, "invite", caller, session, invitees,
+                    out conference))
                     return false;
-            if (!m_adHocSessions.TryInvite(session, caller, invitees,
-                out AdHocConferenceSessions.Snapshot conference))
+            }
+            else
+            {
+                foreach (UUID id in invitees)
+                    if (FindRootPresence(id) == null)
+                        return false;
+                if (!m_adHocSessions.TryInvite(session, caller, invitees, out conference))
+                    return false;
+            }
+            if (conference == null)
                 return false;
             ScenePresence sender = FindRootPresence(caller);
             if (sender == null)
                 return false;
             foreach (UUID id in invitees)
-            {
-                ScenePresence invited = FindRootPresence(id);
-                if (invited != null)
-                    SendConferenceInvitation(invited.Scene, caller, sender.Name, id, session);
-            }
+                DeliverConferenceInvitation(scene, caller, sender.Name, id, session);
             return true;
         }
 
@@ -503,6 +612,56 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         /// <param name="msg"></param>
         protected virtual void OnGridInstantMessage(GridInstantMessage msg)
         {
+            if (m_remoteConferences != null &&
+                (msg.dialog == (byte)InstantMessageDialog.SessionAdd
+                || msg.dialog == (byte)InstantMessageDialog.SessionSend))
+            {
+                UUID to = new UUID(msg.toAgentID);
+                UUID from = new UUID(msg.fromAgentID);
+                UUID session = new UUID(msg.imSessionID);
+                ScenePresence recipient = FindRootPresence(to);
+                if (recipient == null)
+                    return;
+
+                // Membership is checked against ROBUST-side state, not the
+                // untrusted IM payload. A session-add packet is only a wakeup
+                // asking the receiving region to display an invitation.
+                Util.FireAndForget(delegate
+                {
+                    if (!m_remoteConferences.TryRequest(recipient.Scene, "members", to, session, null,
+                        out AdHocConferenceSessions.Snapshot conference)
+                        || !conference.Members.ContainsKey(to))
+                        return;
+                    if (msg.dialog == (byte)InstantMessageDialog.SessionAdd)
+                    {
+                        if (msg.message == ADHOC_INVITE_MARKER)
+                        {
+                            if (conference.Members.TryGetValue(from, out AdHocConferenceSessions.MemberState inviter)
+                                && inviter == AdHocConferenceSessions.MemberState.Joined)
+                                SendConferenceInvitation(recipient.Scene, from, msg.fromAgentName, to, session);
+                        }
+                        else if (msg.message == ADHOC_JOIN_MARKER || msg.message == ADHOC_LEAVE_MARKER)
+                        {
+                            bool joined = msg.message == ADHOC_JOIN_MARKER;
+                            if (!joined || (conference.Members.TryGetValue(from, out AdHocConferenceSessions.MemberState state)
+                                && state == AdHocConferenceSessions.MemberState.Joined))
+                            {
+                                IEventQueue eq = recipient.Scene.RequestModuleInterface<IEventQueue>();
+                                eq?.ChatterBoxSessionAgentListUpdates(session, to,
+                                    new List<GroupChatListAgentUpdateData>
+                                    {
+                                        new GroupChatListAgentUpdateData(from, joined, false, false, joined)
+                                    });
+                            }
+                        }
+                    }
+                    else if (conference.Members.TryGetValue(from, out AdHocConferenceSessions.MemberState sending)
+                        && sending == AdHocConferenceSessions.MemberState.Joined
+                        && conference.Members[to] == AdHocConferenceSessions.MemberState.Joined)
+                        recipient.ControllingClient.SendInstantMessage(msg);
+                }, null, "AdHocConferenceReceive");
+                return;
+            }
             // The normal IM handler intentionally ignores SessionSend. For an
             // ad-hoc conference known to this process, deliver only to a joined
             // recipient and only when the sender is also a joined member.
