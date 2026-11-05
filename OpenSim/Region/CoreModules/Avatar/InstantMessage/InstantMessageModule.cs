@@ -26,13 +26,17 @@
  */
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Timers;
 using log4net;
 using Mono.Addins;
 using Nini.Config;
 using OpenMetaverse;
+using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
+using OpenSim.Framework.Servers.HttpServer;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
@@ -48,6 +52,7 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         /// Is this module enabled?
         /// </value>
         protected bool m_enabled = false;
+        private bool m_registerAdHocCaps = false;
 
         protected readonly List<Scene> m_scenes = new List<Scene>();
 
@@ -71,6 +76,11 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             }
 
             m_enabled = true;
+
+            // A WebRTC module already owns ChatSessionRequest when enabled.
+            // Otherwise the core IM module can expose the text-only capability.
+            IConfig webrtc = config.Configs["WebRtcVoice"];
+            m_registerAdHocCaps = webrtc == null || !webrtc.GetBoolean("Enabled", false);
         }
 
         public virtual void AddRegion(Scene scene)
@@ -81,6 +91,9 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             lock (m_scenes)
                 m_scenes.Add(scene);
             scene.RegisterModuleInterface<IAdHocConferenceModule>(this);
+            if (m_registerAdHocCaps)
+                scene.EventManager.OnRegisterCaps += (UUID agent, Caps caps) =>
+                    RegisterTextConferenceCaps(scene, agent, caps);
         }
 
         public virtual void RegionLoaded(Scene scene)
@@ -168,6 +181,8 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
                     GridInstantMessage delivered = new GridInstantMessage(im, true);
                     delivered.fromAgentID = client.AgentId.Guid;
+                    delivered.fromAgentName = client.Name;
+                    delivered.fromGroup = false;
                     delivered.toAgentID = member.Key.Guid;
                     delivered.offline = 0;
                     m_TransferModule.SendInstantMessage(delivered, delegate(bool success) { });
@@ -258,6 +273,92 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             IEventQueue eq = scene.RequestModuleInterface<IEventQueue>();
             eq?.ChatterBoxSessionStartReply(session, name, 1, false, false,
                 session, success, success ? string.Empty : "generic_request_error", agent);
+        }
+
+        /// <summary>
+        /// Registers the viewer's standard conference capability when no WebRTC
+        /// provider owns it. The exact same text operations are also callable
+        /// through IAdHocConferenceModule by WebRTC providers.
+        /// </summary>
+        private void RegisterTextConferenceCaps(Scene scene, UUID agent, Caps caps)
+        {
+            caps.RegisterSimpleHandler("ChatSessionRequest",
+                new SimpleStreamHandler("/" + UUID.Random(),
+                    delegate(IOSHttpRequest request, IOSHttpResponse response)
+                    {
+                        HandleTextConferenceCaps(scene, agent, request, response);
+                    }));
+        }
+
+        private void HandleTextConferenceCaps(Scene scene, UUID agent,
+            IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST")
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            OSDMap map;
+            using (Stream input = request.InputStream)
+                map = input.Length > 0 ? OSDParser.DeserializeLLSDXml(input) as OSDMap : null;
+            if (map == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+
+            string method = map.ContainsKey("method") ? map["method"].AsString() : string.Empty;
+            UUID session = map.ContainsKey("session-id") ? map["session-id"].AsUUID() : UUID.Zero;
+            if (session.IsZero())
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+
+            List<UUID> invitees = new List<UUID>();
+            if (map.ContainsKey("params") && map["params"] is OSDArray ids)
+            {
+                foreach (OSD id in ids)
+                {
+                    UUID candidate = id.AsUUID();
+                    if (!candidate.IsZero() && candidate != agent && !invitees.Contains(candidate))
+                        invitees.Add(candidate);
+                }
+            }
+
+            switch (method)
+            {
+                case "start conference":
+                    StartConference(scene, agent, session, invitees);
+                    break;
+                case "invite":
+                    InviteToConference(scene, agent, session, invitees);
+                    break;
+                case "accept invitation":
+                    if (!AcceptInvitation(scene, agent, session))
+                    {
+                        response.StatusCode = (int)HttpStatusCode.NotFound;
+                        return;
+                    }
+                    response.RawBuffer = Util.UTF8.GetBytes("<llsd><map><key>agent_info</key><map /></map></llsd>");
+                    return;
+                case "decline invitation":
+                    DeclineInvitation(scene, agent, session);
+                    break;
+                case "start p2p voice":
+                    scene.RequestModuleInterface<IEventQueue>()?.ChatterBoxSessionStartReply(
+                        session, string.Empty, 2, false, false,
+                        session, true, string.Empty, agent);
+                    break;
+                case "fetch history":
+                    response.RawBuffer = Util.UTF8.GetBytes("<llsd><array /></llsd>");
+                    return;
+                default:
+                    response.RawBuffer = Util.UTF8.GetBytes("<llsd><undef /></llsd>");
+                    return;
+            }
+            response.RawBuffer = Util.UTF8.GetBytes("<llsd><map /></llsd>");
         }
 
         private static void SendConferenceRoster(Scene scene, UUID recipient,
