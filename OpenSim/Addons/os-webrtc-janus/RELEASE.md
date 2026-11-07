@@ -18,7 +18,15 @@ The ZIP includes the following **matching release build** files:
 
 Also included: `wolfvoice.ini.example`, `README.md`, `BUILD_COMMIT.txt`, and `SHA256SUMS`.
 
-**The regional DLL and PDB are the exact tested binaries** distributed in [OpenSimulator-AdHocConferences v0.1.0](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences/releases/tag/v0.1.0), validated on two BloodMoon simulators. The other two matching module DLL/PDB pairs are compiled from this `v0.9.3.1-webrtc.2`-derived source branch. A CI check also verifies that these built binaries exist and that the original tested DLL/PDB are copied into the published archive. The release ZIP is built in GitHub Actions and contains no credentials.
+**The regional DLL and PDB are derived from the latest compiled AdHoc maintenance binaries** distributed in [OpenSimulator-AdHocConferences v0.1.0](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences/releases/tag/v0.1.0), validated on two BloodMoon simulators. The other two matching module DLL/PDB pairs are compiled from this `v0.9.3.1-webrtc.2`-derived source branch. A CI check also verifies that these built binaries exist and that the original tested DLL/PDB are copied into the published archive. The release ZIP is built in GitHub Actions and contains no credentials.
+
+## Maintenance refresh — 7 November 2026 (same release tag and download filename)
+
+- Conference system notifications now display **OpenSimulator** instead of **Wolf Territories**.
+- The associated [PHP conference API](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences/blob/main/web/wolf_api.php) now allows users still marked `invited` to be re-invited after a crash/relogin while preserving joined participants.
+- **PHP deployment is separate:** download/deploy the updated `wolf_api.php` on the host of the central conference service; this simulator ZIP does not install PHP.
+- The brand-name correction was compiled successfully in [AdHoc run #40](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences/actions/runs/42413642157). **First-reconnect recovery requires further live testing:** it is possible for a reconnected avatar to remain incorrectly marked `joined` until a subsequent reconnect.
+- The public release name and ZIP filename stay identical, while the actual DLL and SHA-256 values change. Re-download the updated checksum files.
 
 ## Features tested on BloodMoon
 
