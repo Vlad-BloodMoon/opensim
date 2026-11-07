@@ -410,7 +410,10 @@ namespace WebRtcVoice
 
             // The viewer has left this exact call, even if forwarding its logout fails.
             if (logout && map.TryGetValue("viewer_session", out OSD leavingGroupSession))
+            {
                 ForgetGroupVoiceSession(agentID, leavingGroupSession.AsString());
+                ForgetConferenceVoiceConnection(agentID, leavingGroupSession.AsString());
+            }
 
             // The checks passed. Send the request to the voice service.
             OSDMap resp = voiceService.ProvisionVoiceAccountRequest(map, agentID, scene.RegionInfo.RegionID).Result;
@@ -440,7 +443,10 @@ namespace WebRtcVoice
             if (!logout && channelType == "multiagent" && !resp.ContainsKey("error")
                 && map.TryGetValue("channel", out OSD groupChannel)
                 && resp.TryGetValue("viewer_session", out OSD groupSession))
+            {
                 TrackGroupVoiceSession(agentID, scene.RegionInfo.RegionID, groupChannel.AsString(), groupSession.AsString());
+                TrackConferenceVoiceConnection(agentID, groupChannel.AsString(), groupSession.AsString());
+            }
 
             // A session opened through this region: ask wolfvoice about the avatar at the next feed tick.
             if (!logout && channelType == "local" && resp.ContainsKey("viewer_session") && !resp.ContainsKey("error"))
