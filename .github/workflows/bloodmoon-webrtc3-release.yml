@@ -1,7 +1,7 @@
 name: Build and publish BloodMoon WebRTC complete module v0.9.3.1-webrtc.3
 
 # Release only on this dedicated branch, when this workflow is first introduced.
-# Does not change the master branch or existing release tags.
+# Refreshes the same release assets and checksum files without changing the tag name.
 on:
   push:
     branches:
@@ -44,7 +44,7 @@ jobs:
             test -s "bin/${name}.pdb"
           done
 
-      - name: Fetch exact previously Firestorm-tested AdHoc regional DLL
+      - name: Fetch exact updated AdHoc regional DLL from successful build #40
         shell: bash
         run: |
           set -euo pipefail
@@ -66,8 +66,8 @@ jobs:
           for name in WebRtcVoice WebRtcVoiceRegionModule WebRtcVoiceServiceModule; do
             cp "bin/${name}.dll" "bin/${name}.pdb" module/
           done
-          # Preserve byte-for-byte the region module and debug symbols validated
-          # by BloodMoon in the successful AdHoc build #30.
+          # Use byte-for-byte the latest AdHoc maintenance DLL and PDB
+          # from the passing build #40; avoid reintroducing the previous brand name.
           cp verified-region/WebRtcVoiceRegionModule.dll module/WebRtcVoiceRegionModule.dll
           cp verified-region/WebRtcVoiceRegionModule.pdb module/WebRtcVoiceRegionModule.pdb
           cp OpenSim/Addons/os-webrtc-janus/RELEASE.md module/README.md
@@ -75,7 +75,7 @@ jobs:
           cp OpenSim/Addons/os-webrtc-janus/wolfvoice.ini.example module/
           printf '%s\n' "${GITHUB_SHA}" > module/BUILD_COMMIT.txt
           printf '%s\n' 'Source baseline: Vlad-BloodMoon/opensim v0.9.3.1-webrtc.2; patches: Vlad-BloodMoon/OpenSimulator-AdHocConferences v0.1.0' \
-            'WebRtcVoiceRegionModule.dll / .pdb: exact tested binary from AdHoc v0.1.0, Actions run #30' \
+            'WebRtcVoiceRegionModule.dll / .pdb: maintenance build from AdHoc v0.1.0, Actions run #40' \
             'Compatible voice server: BloodMoon WolfVoice only (custom spatial axes and group/AdHoc voice)' > module/PROVENANCE.txt
           (
             cd module
@@ -89,16 +89,11 @@ jobs:
             sha256sum WebRTC_Modules_BloodMoon_0.9.3.1-webrtc.3.zip > WebRTC_Modules_BloodMoon_0.9.3.1-webrtc.3.zip.sha256
           )
 
-      - name: Publish release with source tag and complete tested voice modules
+      - name: Refresh existing v0.9.3.1-webrtc.3 binaries and checksum in place
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view v0.9.3.1-webrtc.3 >/dev/null 2>&1; then
-            echo "Release already exists: refusing to overwrite existing binaries"
-            exit 1
-          fi
-          gh release create v0.9.3.1-webrtc.3 dist/* \
-            --title 'BloodMoon WebRTC 0.9.3.1 — complete voice modules + AdHoc conferences' \
-            --notes-file 'OpenSim/Addons/os-webrtc-janus/RELEASE.md' \
-            --target "${GITHUB_SHA}" \
-            --latest
+          gh release view v0.9.3.1-webrtc.3 >/dev/null
+          gh release upload v0.9.3.1-webrtc.3 dist/* --clobber
+          gh release edit v0.9.3.1-webrtc.3 \
+            --notes-file 'OpenSim/Addons/os-webrtc-janus/RELEASE.md' --latest
