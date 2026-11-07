@@ -855,7 +855,7 @@ namespace WebRtcVoice
                 { "session", OSD.FromUUID(session) },
                 { "name", OSD.FromString(c?.Name ?? string.Empty) },
                 { "from", OSD.FromUUID(UUID.Zero) },
-                { "from_name", OSD.FromString("Wolf Territories") },
+                { "from_name", OSD.FromString("OpenSimulator") },
                 { "message", OSD.FromString(text) }
             };
             DeliverConf(scene, to, p);
