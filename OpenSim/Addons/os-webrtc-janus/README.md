@@ -1,3 +1,5 @@
+> **BloodMoon release `v0.9.3.1-webrtc.3`:** This fork's packaged WebRTC modules are tested **only against BloodMoon's modified WolfVoice server**, which includes BloodMoon's spatial-axis correction, group voice extensions and ad-hoc multi-avatar IM/voice conferences. The upstream WolfVoice server does **not** yet have the entire BloodMoon feature set. Do not confuse this release with an unmodified Janus deployment. See [BloodMoon release / installation](RELEASE.md) and [installation française](BLOODMOON_INSTALL.fr.md).
+
 # os-webrtc-janus
 
 Addon-module for [OpenSimulator] to provide webrtc voice support
