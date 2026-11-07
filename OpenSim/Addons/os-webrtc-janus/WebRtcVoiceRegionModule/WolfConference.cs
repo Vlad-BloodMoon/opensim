@@ -63,8 +63,72 @@ namespace WebRtcVoice
         // [WebRtcVoice] ConferenceApiUrl. Empty (the default): conferences and Wolf Chat rooms are off.
         private string m_ConfUrl = string.Empty;
         private string m_SimSecret = string.Empty;
+        private bool m_UseExistingVoiceKey;
+        // WolfVoiceKeyFile refreshes its value when the file rotates. Do not
+        // pin the fallback secret at startup while the PHP service has rotated.
+        private string ConferenceSecret => m_UseExistingVoiceKey ? CredKey : m_SimSecret;
         private readonly Dictionary<UUID, Conference> m_Conferences = new Dictionary<UUID, Conference>();
         private readonly Dictionary<UUID, DateTime> m_NotConferences = new Dictionary<UUID, DateTime>();
+        // Firestorm automatically sends a second call request when a voice invitation
+        // arrives. Suppress repeated invitations, including on destination simulators.
+        private static readonly TimeSpan CONFERENCE_RING_SUPPRESSION = TimeSpan.FromSeconds(30);
+        private readonly Dictionary<UUID, DateTime> m_ConferenceRecentRings = new Dictionary<UUID, DateTime>();
+
+        private void NoteConferenceVoiceInvitation(UUID session)
+        {
+            lock (m_ConferenceRecentRings)
+            {
+                if (m_ConferenceRecentRings.Count > 2000) m_ConferenceRecentRings.Clear();
+                m_ConferenceRecentRings[session] = DateTime.UtcNow;
+            }
+        }
+
+        private bool BeginConferenceVoiceInvitation(UUID session)
+        {
+            lock (m_ConferenceRecentRings)
+            {
+                if (m_ConferenceRecentRings.TryGetValue(session, out DateTime recent)
+                    && DateTime.UtcNow - recent < CONFERENCE_RING_SUPPRESSION) return false;
+                if (m_ConferenceRecentRings.Count > 2000) m_ConferenceRecentRings.Clear();
+                m_ConferenceRecentRings[session] = DateTime.UtcNow;
+                return true;
+            }
+        }
+        // Keep track of who is ACTUALLY connected to a conference voice channel.
+        // This only controls viewer notifications; it never changes voice admission.
+        private readonly Dictionary<UUID, Tuple<UUID, string>> m_ConferenceVoiceConnections
+            = new Dictionary<UUID, Tuple<UUID, string>>();
+
+        private void TrackConferenceVoiceConnection(UUID avatar, string channel, string viewerSession)
+        {
+            if (string.IsNullOrEmpty(viewerSession)) return;
+            lock (m_ConferenceVoiceConnections)
+            {
+                if (channel.StartsWith("conf-", StringComparison.Ordinal)
+                    && UUID.TryParse(channel.Substring(5), out UUID conference))
+                    m_ConferenceVoiceConnections[avatar] = Tuple.Create(conference, viewerSession);
+                else
+                    m_ConferenceVoiceConnections.Remove(avatar);
+            }
+        }
+
+        private void ForgetConferenceVoiceConnection(UUID avatar, string viewerSession)
+        {
+            lock (m_ConferenceVoiceConnections)
+            {
+                if (m_ConferenceVoiceConnections.TryGetValue(avatar, out Tuple<UUID, string> live)
+                    && live.Item2 == viewerSession)
+                    m_ConferenceVoiceConnections.Remove(avatar);
+            }
+        }
+
+        private bool ConferenceVoiceAlreadyConnected(UUID avatar, UUID conference)
+        {
+            lock (m_ConferenceVoiceConnections)
+                return m_ConferenceVoiceConnections.TryGetValue(avatar, out Tuple<UUID, string> live)
+                    && live.Item1 == conference;
+        }
+
         // [review] "you are not in it" (403), remembered a minute per session XOR agent, so typing in a session one is
         // not in does not ask the brain every line.
         private readonly Dictionary<UUID, DateTime> m_NotMember = new Dictionary<UUID, DateTime>();
@@ -113,7 +177,10 @@ namespace WebRtcVoice
                 m_log.Info($"{logHeader}: no ConferenceApiUrl - conference chats and Wolf Chat voice rooms are off (group voice is not affected)");
                 return;
             }
-            string secretPath = "/etc/opensim/sim_secret";
+            // Default to the voice credential secret already configured for
+            // this simulator: no additional per-sim secret file is required.
+            // An explicit [Wolf] SimSecretPath still takes precedence.
+            string secretPath = string.Empty;
             IConfig wolf = config.Configs["Wolf"];
             if (wolf != null)
                 secretPath = wolf.GetString("SimSecretPath", secretPath);
@@ -126,7 +193,8 @@ namespace WebRtcVoice
             {
                 m_log.WarnFormat("{0}: could not read {1}: {2}", logHeader, secretPath, e.Message);
             }
-            if (m_SimSecret.Length == 0)
+            m_UseExistingVoiceKey = string.IsNullOrEmpty(secretPath);
+            if (ConferenceSecret.Length == 0)
                 m_log.Warn($"{logHeader}: no sim secret - conference chats and Wolf Chat voice rooms are off");
         }
 
@@ -135,7 +203,7 @@ namespace WebRtcVoice
             // [review] A fresh login has no conference windows open, and the viewer drops conference text for a session
             // it does not have (llimprocessing.cpp:1865-1872). So at login every conference this avatar had joined goes
             // back to 'invited': the next line in it arrives as an invitation, which opens the window again.
-            if ((sp.TeleportFlags & Constants.TeleportFlags.ViaLogin) != 0 && m_SimSecret.Length > 0)
+            if ((sp.TeleportFlags & Constants.TeleportFlags.ViaLogin) != 0 && ConferenceSecret.Length > 0)
             {
                 Scene scene = sp.Scene;
                 UUID who = sp.UUID;
@@ -146,12 +214,16 @@ namespace WebRtcVoice
                 }, null, "WolfConferenceRelogin");
             }
             // -= first: a presence made root twice must not get every message twice.
+            // A new root presence must not inherit a stale voice connection.
+            lock (m_ConferenceVoiceConnections) m_ConferenceVoiceConnections.Remove(sp.UUID);
             sp.ControllingClient.OnInstantMessage -= OnClientConferenceMessage;
             sp.ControllingClient.OnInstantMessage += OnClientConferenceMessage;
+            m_log.InfoFormat("{0}[CONF-TEXT-DIAG]: handler attached avatar={1} region={2}", logHeader, sp.UUID, sp.Scene.RegionInfo.RegionName);
         }
 
         private void OnMakeChildAgentConf(ScenePresence sp)
         {
+            lock (m_ConferenceVoiceConnections) m_ConferenceVoiceConnections.Remove(sp.UUID);
             sp.ControllingClient.OnInstantMessage -= OnClientConferenceMessage;
         }
 
@@ -184,7 +256,7 @@ namespace WebRtcVoice
             error = null;
             status = 0;
             answered = false;
-            if (m_SimSecret.Length == 0 || m_ConfUrl.Length == 0)
+            if (ConferenceSecret.Length == 0 || m_ConfUrl.Length == 0)
             {
                 error = "conferences are not configured on this region";
                 return null;
@@ -197,7 +269,7 @@ namespace WebRtcVoice
             string json = JsonSerializer.Serialize(body);
             long when = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             string who = agent.ToString();
-            string sig = HexHmac(m_SimSecret, region + "\n" + who + "\n" + when.ToString(CultureInfo.InvariantCulture) + "\n" + json);
+            string sig = HexHmac(ConferenceSecret, region + "\n" + who + "\n" + when.ToString(CultureInfo.InvariantCulture) + "\n" + json);
             try
             {
                 using (HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, m_ConfUrl))
@@ -529,11 +601,6 @@ namespace WebRtcVoice
 
             Conference c = GetConference(scene, caller, session);
             if (c is null) return false;
-            if (!AllowCall(caller))
-            {
-                response.StatusCode = (int)HttpStatusCode.Forbidden;
-                return true;
-            }
             Conference v = Brain(scene, "voice", caller, session, null, out string error, out int _);
             if (v is null)
             {
@@ -543,13 +610,18 @@ namespace WebRtcVoice
             }
             Remember(v);
             RespondCredentials(response, ConfChannel(session), caller);
-            string callerName = AvatarName(scene, caller);
-            // Ring everyone else in it. Someone already in the call just accepts it silently
-            // (llimview.cpp:4277-4283 "you have already started a call").
-            foreach (ConfMember m in v.Members)
-                if (m.Id != caller)
-                    DeliverConf(scene, m.Id, VoiceEnvelope(caller, callerName, v, m.Id));
-            m_log.InfoFormat("{0}[CALL]: {1} started voice in conference {2}", logHeader, caller, session);
+            // Invited viewers automatically issue call again: joining must not
+            // re-ring everyone or exhaust the outbound call rate limit.
+            if (BeginConferenceVoiceInvitation(session) && AllowCall(caller))
+            {
+                string callerName = AvatarName(scene, caller);
+                foreach (ConfMember m in v.Members)
+                    if (m.Id != caller)
+                        DeliverConf(scene, m.Id, VoiceEnvelope(caller, callerName, v, m.Id));
+                m_log.InfoFormat("{0}[CALL]: {1} rang conference {2}", logHeader, caller, session);
+            }
+            else
+                m_log.DebugFormat("{0}[CALL]: {1} joined conference {2} without re-ringing", logHeader, caller, session);
             return true;
         }
 
@@ -708,12 +780,18 @@ namespace WebRtcVoice
         /// </summary>
         private void OnClientConferenceMessage(IClientAPI client, GridInstantMessage im)
         {
+            // Log before any filters: Firestorm's multi-avatar IM uses SessionSend,
+            // and a suppressed packet would otherwise leave no evidence.
+            m_log.InfoFormat("{0}[CONF-TEXT-ENTRY]: viewer IM dialog={1} fromGroup={2} session={3} avatar={4}", logHeader, im.dialog, im.fromGroup, im.imSessionID, client.AgentId);
             if (im.dialog != IM_SESSION_SEND && im.dialog != IM_SESSION_LEAVE) return;
-            if (m_SimSecret.Length == 0 || im.fromGroup) return;
+            // Do not use the viewer-controlled fromGroup flag to discard ad-hoc IMs.
+            // Actual group session ids and member access are checked below.
+            if (ConferenceSecret.Length == 0) return;
             UUID session = new UUID(im.imSessionID);
             UUID from = client.AgentId;
             if (session.IsZero()) return;
             Scene scene = client.Scene as Scene;
+            m_log.InfoFormat("{0}[CONF-TEXT-DIAG]: received dialog={1} session={2} avatar={3}", logHeader, im.dialog, session, from);
             if (scene is null) return;
             // A group's own session id is the group id (llimview.cpp:2595-2598): not ours.
             IGroupsModule groups = scene.RequestModuleInterface<IGroupsModule>();
@@ -736,6 +814,7 @@ namespace WebRtcVoice
                     }
                     Conference c = GetConference(scene, from, session);
                     if (c is null) return;
+                    m_log.InfoFormat("{0}[CONF-TEXT-DIAG]: session={1} avatar={2} members={3}", logHeader, session, from, c.Members.Count);
                     ConfMember me = c.Find(from);
                     if (me != null && !me.Joined)
                     {
@@ -748,6 +827,9 @@ namespace WebRtcVoice
                     string fromName = AvatarName(scene, from);
                     foreach (ConfMember m in c.Members)
                     {
+                        // Firestorm displays the sender's own conference IM locally.
+                        if (m.Id == from) continue;
+                        m_log.InfoFormat("{0}[CONF-TEXT-DIAG]: dispatch session={1} from={2} to={3} joined={4}", logHeader, session, from, m.Id, m.Joined);
                         DeliverConf(scene, m.Id, m.Joined
                                 ? TextEnvelope("text", from, fromName, c, message)
                                 : TextEnvelope("invite", from, fromName, c, message));
@@ -843,28 +925,31 @@ namespace WebRtcVoice
         private void DeliverConf(Scene scene, UUID to, OSDMap payload)
         {
             if (ApplyConfLocally(to, payload)) return;
+            m_log.InfoFormat("{0}[CONF-TEXT-DIAG]: nonlocal recipient={1} session={2} kind={3}", logHeader, to, payload["session"].AsUUID(), payload["k"].AsString());
             // [review] signed with the time, so a captured envelope cannot be replayed later (OnIncomingConference)
             payload["ts"] = OSD.FromString(DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
             IMessageTransferModule tm = scene.RequestModuleInterface<IMessageTransferModule>();
             if (tm is null) return;
             string json = OSDParser.SerializeJsonString(payload);
-            string sig = HexHmac(m_SimSecret, "wolfconf1:" + to.ToString() + ":" + json);
+            string sig = HexHmac(ConferenceSecret, "wolfconf1:" + to.ToString() + ":" + json);
             UUID from = payload.ContainsKey("from") ? payload["from"].AsUUID() : UUID.Zero;
             GridInstantMessage gim = new GridInstantMessage(scene, from, payload.ContainsKey("from_name") ? payload["from_name"].AsString() : string.Empty,
                     to, WOLF_CALL_DIALOG, false, string.Empty, payload["session"].AsUUID(), false, Vector3.Zero,
                     Util.UTF8.GetBytes(WOLF_CONF_MARK + sig + "\n" + json), true);
+            // Dialog 2 is an internal envelope, never a viewer IM. A child
+            // agent must not consume it: route to the recipient's root region.
             tm.SendInstantMessage(gim, delegate (bool success)
             {
                 if (!success)
                     m_log.DebugFormat("{0}[CONF]: {1} could not be reached for {2}", logHeader, to, payload["k"].AsString());
-            });
+            }, true);
         }
 
         /// <summary>A conference envelope from another region (DeliverConf). Fires only where the recipient
         /// is a root agent (MessageTransferModule.cs:407-415).</summary>
         private void OnIncomingConference(GridInstantMessage msg)
         {
-            if (msg.dialog != WOLF_CALL_DIALOG || msg.binaryBucket is null || m_SimSecret.Length == 0) return;
+            if (msg.dialog != WOLF_CALL_DIALOG || msg.binaryBucket is null || ConferenceSecret.Length == 0) return;
             string text = Util.UTF8.GetString(msg.binaryBucket);
             if (!text.StartsWith(WOLF_CONF_MARK, StringComparison.Ordinal)) return;
             try
@@ -875,7 +960,7 @@ namespace WebRtcVoice
                 string sig = rest.Substring(0, nl);
                 string json = rest.Substring(nl + 1);
                 UUID to = new UUID(msg.toAgentID);
-                string want = HexHmac(m_SimSecret, "wolfconf1:" + to.ToString() + ":" + json);
+                string want = HexHmac(ConferenceSecret, "wolfconf1:" + to.ToString() + ":" + json);
                 if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(sig), Encoding.ASCII.GetBytes(want)))
                 {
                     m_log.DebugFormat("{0}[CONF]: dropped a conference message for {1} with a bad signature", logHeader, to);
@@ -908,6 +993,7 @@ namespace WebRtcVoice
             {
                 ScenePresence sp = s.GetScenePresence(to);
                 if (sp is null || sp.IsChildAgent) continue;
+                m_log.InfoFormat("{0}[CONF-TEXT-DIAG]: root-local delivery to={1} kind={2} session={3}", logHeader, to, p["k"].AsString(), p["session"].AsUUID());
                 IEventQueue eq = s.RequestModuleInterface<IEventQueue>();
                 UUID session = p["session"].AsUUID();
                 string name = p.ContainsKey("name") ? p["name"].AsString() : string.Empty;
@@ -931,6 +1017,11 @@ namespace WebRtcVoice
                         return true;
                     case "voice":
                     {
+                        // A participant already in this voice room must not receive another
+                        // ChatterBoxInvitation: Firestorm shows fake leave/rejoin notices.
+                        if (ConferenceVoiceAlreadyConnected(to, session)) return true;
+                        // Prevent invited avatars from re-inviting the whole room.
+                        NoteConferenceVoiceInvitation(session);
                         // As HandleCall's P2P ring, with invitation_type CONFERENCE_SESSION: the viewer asks
                         // "VoiceInviteAdHoc" (llimview.cpp:4236-4241, 5269-5287) and joins with this map.
                         OSDMap voice = new OSDMap
