@@ -4,8 +4,9 @@
     NonSpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
     WebRtcVoiceServerURI = https://voice.example.org:9443
     CredKeyFile = voice_cred_key
-    ; BloodMoon-approved simulators only: the hosted AdHoc API is restricted.
-    ConferenceApiUrl = https://bloodmoonpack.com/adhocconf/wolf_api.php
+    ; Your OWN conference PHP/MySQL endpoint, see OpenSimulator-AdHocConferences.
+    ; BloodMoon's private service is restricted; do not copy its URL.
+    ConferenceApiUrl = https://conference.example.org/adhocconf/wolf_api.php
     MessageDetails = false
 
 [VivoxVoice]
