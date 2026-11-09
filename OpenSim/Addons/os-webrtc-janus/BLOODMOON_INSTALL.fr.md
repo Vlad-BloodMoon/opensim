@@ -17,12 +17,12 @@ Les trois paires de modules sont destinées à être utilisées **ensemble** ave
 
 Cette archive fonctionne avec [BloodMoon Voice v1.0.0](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/releases/tag/v1.0.0). Pour les conférences AdHoc, installer séparément [l'API PHP/MySQL](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences) sur **votre** hébergement. La DLL régionale AdHoc est déjà incluse dans ce pack .3. [Guide complet des trois composants](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/COMPLETE_STACK.md).
 
-**L'adresse `conference.example.org` ci-dessous est fictive : elle doit être remplacée par votre domaine HTTPS réel et le chemin vers votre `wolf_api.php`.** N'utilisez pas l'API privée de BloodMoon pour une grille indépendante.
+**L'adresse `conference.example.org` ci-dessous est fictive : elle doit être remplacée par votre domaine HTTPS réel et le chemin vers votre `wolf_api.php`.** Les explications complètes sont dans le [guide français du début à la fin](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/INSTALLATION_FR.md). N'utilisez pas l'API privée de BloodMoon pour une grille indépendante.
 
 ## Installation pour un propriétaire de simulateur
 
 1. Arrête ton simulateur. Sauvegarde les six fichiers DLL/PDB de la précédente version et ton `wolfvoice.ini`.
-2. Télécharge l'archive de la nouvelle [release](https://github.com/Vlad-BloodMoon/opensim/releases), puis extrais-la.
+2. Télécharge **uniquement** l'archive de la [release v0.9.3.1-webrtc.3](https://github.com/Vlad-BloodMoon/opensim/releases/tag/v0.9.3.1-webrtc.3), puis extrais-la.
 3. Remplace dans `bin/` les **trois paires DLL/PDB**. Ne remplace pas les autres modules d'OpenSimulator et ne supprime pas `WebRtcJanusService.dll` s'il existe.
 4. Conserve les valeurs actuelles et privées de `WebRtcVoiceServerURI`, `RpcKeyFile`, `CredKeyFile`. Le fichier `wolfvoice.ini.example` est un **exemple**, ne le copie pas tel quel sur une installation configurée.
 5. Vérifie que la section `[WebRtcVoice]` contient :
