@@ -3,6 +3,8 @@
     SpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
     NonSpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
     WebRtcVoiceServerURI = https://voice.example.org:9443
+    ; For a new independent grid using two-key relay authentication:
+    RpcKeyFile = voice_rpc_key
     CredKeyFile = voice_cred_key
     ; Your OWN conference PHP/MySQL endpoint, see OpenSimulator-AdHocConferences.
     ; BloodMoon's private service is restricted; do not copy its URL.
@@ -14,7 +16,9 @@
 
 ; Store the administrator-supplied key in bin/voice_cred_key.
 ; Start OpenSim with bin as its working directory.
-; Configure RpcKeyFile only if your voice service requires a relay key.
+; Two-key example: provide both voice_rpc_key and voice_cred_key privately.
+; Existing one-key + trusted-IP allowlist deployments must keep their existing mode
+; and omit RpcKeyFile if the server is not using a relay key.
 
 ; IMPORTANT: BloodMoon's WebRTC modules require BloodMoon's modified WolfVoice server
 ; for the tested axis fixes, group voice, and ad-hoc conference functionality.
