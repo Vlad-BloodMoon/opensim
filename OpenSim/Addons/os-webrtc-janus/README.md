@@ -1,3 +1,5 @@
+> [**Documentation française complète**](README.fr.md) · [**English installation and full stack**](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/INSTALLATION.md)
+
 > **BloodMoon release `v0.9.3.1-webrtc.3`:** This fork's packaged WebRTC modules are tested **only against BloodMoon's modified WolfVoice server**, which includes BloodMoon's spatial-axis correction, group voice extensions and ad-hoc multi-avatar IM/voice conferences. The upstream WolfVoice server does **not** yet have the entire BloodMoon feature set. Do not confuse this release with an unmodified Janus deployment. Use [BloodMoon Voice](https://github.com/Vlad-BloodMoon/BloodMoon-Voice) and configure your own conference PHP/MySQL API from [OpenSimulator-AdHocConferences](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences). The sample URL must be replaced with your own endpoint. See [BloodMoon release / installation](RELEASE.md) and [installation française](BLOODMOON_INSTALL.fr.md).
 
 # os-webrtc-janus
