@@ -22,11 +22,14 @@ Dans `bin/config/wolfvoice.ini`, conserver les clés et les réglages nécessair
 [WebRtcVoice]
 Enabled = true
 WebRtcVoiceServerURI = https://voice.example.org:9443
+RpcKeyFile = voice_rpc_key
 CredKeyFile = voice_cred_key
 ConferenceApiUrl = https://conference.example.org/adhocconf/wolf_api.php
 ```
 
 **Les deux domaines `example.org` sont fictifs** et doivent être remplacés par les vrais noms de vos services. Le premier est le serveur vocal ; le second est le serveur web qui héberge **votre propre** `wolf_api.php`. L'API BloodMoon de production n'est pas librement accessible.
+
+**L'exemple correspond à une nouvelle installation à deux clés** : `RpcKeyFile` pour la liaison des simulateurs et `CredKeyFile` pour les identifiants vocaux. Si ton serveur utilise déjà **une seule clé avec une liste d'IP autorisées**, conserve cette configuration et n'ajoute pas de clé RPC. Les fichiers de clés doivent exister et rester privés.
 
 Le paramètre `ConferenceApiUrl` est nécessaire **sur chaque simulateur** pour les conférences AdHoc inter-simulateurs ; ces conférences nécessitent aussi l'installation et l'autorisation de l'API. Les appels vocaux ordinaires fonctionnent sans cette API.
 
