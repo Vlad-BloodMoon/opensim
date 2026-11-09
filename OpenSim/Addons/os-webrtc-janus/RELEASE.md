@@ -46,16 +46,16 @@ These are **BloodMoon tests**, not exhaustive validation on arbitrary external O
 2. **Stop the simulator** and back up its existing `bin/` voice DLL/PDB files, `wolfvoice.ini`, and key configuration.
 3. Extract the ZIP and copy the **three matching DLL/PDB pairs** into `bin/`, replacing the corresponding files. Do **not** remove other OpenSimulator modules. Keep `WebRtcJanusService.dll` if already installed.
 4. Compare the included `wolfvoice.ini.example` with your current `wolfvoice.ini`. **Merge settings manually**; never overwrite real server URLs or key paths with example placeholders. Keep the existing configured `WebRtcVoiceServerURI`, `RpcKeyFile` and `CredKeyFile` as appropriate.
-5. In `[WebRtcVoice]`, enable the ad-hoc conference endpoint:
+5. In `[WebRtcVoice]`, configure the URL of **your own separately installed conference PHP/MySQL API** from [OpenSimulator-AdHocConferences](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences). The following domain is a placeholder, not a public BloodMoon service:
 
    ```ini
-   ConferenceApiUrl = https://bloodmoonpack.com/adhocconf/wolf_api.php
+   ConferenceApiUrl = https://conference.example.org/adhocconf/wolf_api.php
    ```
 
 6. Restart the simulator, verify ordinary spatial/private/group voice, then test ad-hoc IM and optional group call.
 7. **Repeat on every simulator** where conference participants may reside. Both the updated DLLs **and** `ConferenceApiUrl` are mandatory for cross-simulator invitations.
 
-**Compatibility note:** This is for the **BloodMoon WolfVoice server and its trusted, explicitly approved simulators**. The endpoint is not open access; a shared voice credential key and allowed server IP are required. Contact the BloodMoon administrator through a private channel for authorization. **Never post a key in a GitHub issue or upload it with diagnostics.**
+**Compatibility note:** For independent installations, use [BloodMoon Voice v1.0.0](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/releases/tag/v1.0.0) and your own AdHoc API. This is for the **BloodMoon-modified WolfVoice server and trusted, explicitly approved simulators**. The endpoint is not open access; a shared voice credential key and allowed server IP are required. Contact the BloodMoon administrator through a private channel for authorization. **Never post a key in a GitHub issue or upload it with diagnostics.**
 
 ## Architecture and security
 
