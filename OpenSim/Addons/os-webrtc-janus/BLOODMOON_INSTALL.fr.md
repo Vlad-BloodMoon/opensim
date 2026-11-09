@@ -22,7 +22,7 @@ Les trois paires de modules sont destinées à être utilisées **ensemble** ave
 5. Vérifie que la section `[WebRtcVoice]` contient :
 
    ```ini
-   ConferenceApiUrl = https://bloodmoonpack.com/adhocconf/wolf_api.php
+   ConferenceApiUrl = https://conference.example.org/adhocconf/wolf_api.php
    ```
 
 6. Redémarre le simulateur. Teste la voix locale, l'appel privé, la voix des groupes, puis une conférence IM écrite à plusieurs et un appel vocal.
