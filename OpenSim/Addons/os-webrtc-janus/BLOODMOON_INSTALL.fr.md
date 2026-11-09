@@ -13,7 +13,13 @@
 
 Les trois paires de modules sont destinées à être utilisées **ensemble** avec la version de base BloodMoon.
 
-## Installation pour un propriétaire de simulateur autorisé
+## Avant l'installation — votre propre serveur et votre propre API
+
+Cette archive fonctionne avec [BloodMoon Voice v1.0.0](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/releases/tag/v1.0.0). Pour les conférences AdHoc, installer séparément [l'API PHP/MySQL](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences) sur **votre** hébergement. La DLL régionale AdHoc est déjà incluse dans ce pack .3. [Guide complet des trois composants](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/COMPLETE_STACK.md).
+
+**L'adresse `conference.example.org` ci-dessous est fictive : elle doit être remplacée par votre domaine HTTPS réel et le chemin vers votre `wolf_api.php`.** N'utilisez pas l'API privée de BloodMoon pour une grille indépendante.
+
+## Installation pour un propriétaire de simulateur
 
 1. Arrête ton simulateur. Sauvegarde les six fichiers DLL/PDB de la précédente version et ton `wolfvoice.ini`.
 2. Télécharge l'archive de la nouvelle [release](https://github.com/Vlad-BloodMoon/opensim/releases), puis extrais-la.
@@ -36,7 +42,7 @@ Le service central `wolf_api.php` gère la liste et l'état des participants. L'
 
 ## Sécurité et limites
 
-Le simulateur doit être autorisé par BloodMoon. Les clés vocales sont privées et **ne sont jamais fournies dans l'archive**. Ne publie pas les clés, mots de passe, URI de capacités privées ou identifiants de session.
+Le simulateur doit être autorisé par l'administrateur du serveur vocal utilisé. L'infrastructure hébergée par BloodMoon est réservée aux simulateurs explicitement approuvés. Les clés vocales sont privées et **ne sont jamais fournies dans l'archive**. Ne publie pas les clés, mots de passe, URI de capacités privées ou identifiants de session.
 
 Le mécanisme actuel repose sur une clé partagée et des IP autorisées ; il convient à des simulateurs **de confiance**, pas à une ouverture sans contrôle à des administrateurs externes non fiables.
 
