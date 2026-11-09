@@ -40,6 +40,17 @@ Also included: `wolfvoice.ini.example`, `README.md`, `BUILD_COMMIT.txt`, and `SH
 
 These are **BloodMoon tests**, not exhaustive validation on arbitrary external OpenSimulator forks or upstream WolfVoice releases.
 
+## Complete installation — begin here
+
+**[English: complete server + modules + AdHoc API installation](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/INSTALLATION.md)** · **[Français : installation complète pas à pas](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/INSTALLATION_FR.md)**
+
+The server and central API are **separate projects**:
+1. [BloodMoon Voice v1.0.0](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/releases/tag/v1.0.0) — self-hosted WebRTC voice backend.
+2. **This exact `v0.9.3.1-webrtc.3` module package** — all three matching DLL/PDB pairs. It already contains the correct AdHoc regional DLL.
+3. [OpenSimulator-AdHocConferences](https://github.com/Vlad-BloodMoon/OpenSimulator-AdHocConferences) — independently deployed PHP/MySQL API needed for multi-avatar ad-hoc conferences. Do not install the older standalone AdHoc DLL over this release.
+
+In your own simulator configuration, `ConferenceApiUrl = https://conference.example.org/adhocconf/wolf_api.php` is a **non-working placeholder**. Replace the example domain/path with your **own** HTTPS API location. The BloodMoon production endpoint is not available to arbitrary grids.
+
 ## Installation — every participating simulator
 
 1. Make sure the simulator is OpenSimulator **0.9.3.1, .NET 8**, with the same WebRTC/WolfVoice baseline.
