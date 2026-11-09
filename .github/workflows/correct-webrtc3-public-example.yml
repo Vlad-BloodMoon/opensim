@@ -1,0 +1,66 @@
+name: Correct public conference API example in WebRTC .3 release
+
+on:
+  push:
+    branches:
+      - release/bloodmoon-webrtc.3
+    paths:
+      - .github/workflows/correct-webrtc3-public-example.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-release-docs:
+    if: github.repository == 'Vlad-BloodMoon/opensim'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.9.3.1-webrtc.3
+      ZIP_NAME: WebRTC_Modules_BloodMoon_0.9.3.1-webrtc.3.zip
+    steps:
+      - uses: actions/checkout@v4
+      - name: Safely replace example URL in the published ZIP, preserving all binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "$RELEASE_TAG" --pattern "$ZIP_NAME" --repo "$GITHUB_REPOSITORY" --dir .
+          mkdir -p before contents
+          unzip -q "$ZIP_NAME" -d contents
+          find contents -type f \( -name '*.dll' -o -name '*.pdb' \) -print0 | sort -z | xargs -0 sha256sum > before/binaries.sha256
+          test "$(grep -Ec '\.dll$' before/binaries.sha256)" -eq 3
+          test "$(grep -Ec '\.pdb$' before/binaries.sha256)" -eq 3
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("contents")
+          count = 0
+          for p in root.rglob("*"):
+              if not p.is_file() or p.suffix not in (".md", ".txt", ".example", ".ini"):
+                  continue
+              original = p.read_text(encoding="utf-8")
+              updated = original.replace(
+                  "https://bloodmoonpack.com/adhocconf/wolf_api.php",
+                  "https://conference.example.org/adhocconf/wolf_api.php")
+              if original != updated:
+                  p.write_text(updated, encoding="utf-8")
+                  count += 1
+          print(f"Updated {count} example documents in release ZIP")
+          assert count >= 1, "Expected example URL absent; review the archive manually"
+          PY
+          (cd contents && sha256sum -c <(sed 's|contents/||g' ../before/binaries.sha256)) || { echo "Binary SHA check failed"; exit 1; }
+          checksum_file="$(find contents -name SHA256SUMS -type f -print -quit)"
+          if [[ -n "$checksum_file" ]]; then
+            dir="$(dirname "$checksum_file")"
+            (cd "$dir" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort | xargs -r sha256sum > SHA256SUMS)
+          fi
+          rm -f "$ZIP_NAME"
+          (cd contents && zip -q -r "../$ZIP_NAME" .)
+          mkdir -p final
+          unzip -q "$ZIP_NAME" -d final
+          (cd final && sha256sum -c <(sed 's|contents/||g' ../before/binaries.sha256))
+          sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
+          sha256sum -c "$ZIP_NAME.sha256"
+          gh release upload "$RELEASE_TAG" "$ZIP_NAME" "$ZIP_NAME.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$RELEASE_TAG" --notes-file OpenSim/Addons/os-webrtc-janus/RELEASE.md --repo "$GITHUB_REPOSITORY"
+          echo 'Documentation republished and all 6 DLL/PDB files preserved byte for byte.'
