@@ -1,0 +1,38 @@
+name: Refresh WebRTC .3 bilingual release documentation
+
+on:
+  push:
+    branches:
+      - release/bloodmoon-webrtc.3
+    paths:
+      - .github/workflows/refresh-webrtc3-notes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    if: github.repository == 'Vlad-BloodMoon/opensim'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update release description only, keep DLL assets unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Installation / Installation guide'
+            echo
+            echo '**Français :** [guide complet du serveur, des DLL et de l’API AdHoc](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/INSTALLATION_FR.md) · [notice de ces modules](https://github.com/Vlad-BloodMoon/opensim/blob/release/bloodmoon-webrtc.3/OpenSim/Addons/os-webrtc-janus/BLOODMOON_INSTALL.fr.md)'
+            echo
+            echo '**English:** [complete installation guide](https://github.com/Vlad-BloodMoon/BloodMoon-Voice/blob/main/docs/INSTALLATION.md) · [WebRTC module details](https://github.com/Vlad-BloodMoon/opensim/blob/release/bloodmoon-webrtc.3/OpenSim/Addons/os-webrtc-janus/RELEASE.md)'
+            echo
+            echo '**Both languages / Dans les deux langues :** The example conference hostname must be replaced by your own HTTPS PHP/MySQL API hostname. / Le domaine d’exemple de l’API doit être remplacé par le vôtre. The correct AdHoc DLL is already inside this .3 ZIP. / La DLL AdHoc correcte est déjà dans ce ZIP .3.'
+            echo
+            cat OpenSim/Addons/os-webrtc-janus/RELEASE.md
+          } > notes.md
+          ! grep -Fq 'https://bloodmoonpack.com/adhocconf/wolf_api.php' notes.md
+          gh release edit v0.9.3.1-webrtc.3 --notes-file notes.md --repo "$GITHUB_REPOSITORY"
